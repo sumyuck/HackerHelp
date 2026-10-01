@@ -1,9 +1,10 @@
 import OpenAI from 'openai';
-import { withRetry } from './retry';
+
+/** OpenAI is used for embeddings only; chat generation runs on Anthropic (llm.service.ts). */
 
 let client: OpenAI | undefined;
 
-export function getOpenAIModel(variable: 'OPENAI_CHAT_MODEL' | 'OPENAI_EMBEDDING_MODEL'): string {
+export function getOpenAIModel(variable: 'OPENAI_EMBEDDING_MODEL'): string {
   const model = process.env[variable]?.trim();
   if (!model) throw new Error(`${variable} must be configured in .env.`);
   return model;
@@ -18,19 +19,4 @@ export function getOpenAIClient(): OpenAI {
     client = new OpenAI({ apiKey, timeout: 20_000, maxRetries: 0 });
   }
   return client;
-}
-
-/** Free-form generation for drafting tasks (e.g. announcements). Not grounded; never use for factual answers. */
-export async function composeText(systemPrompt: string, userPrompt: string, maxTokens = 1024): Promise<string> {
-  const response = await withRetry('openai.chat', () => getOpenAIClient().chat.completions.create({
-    model: getOpenAIModel('OPENAI_CHAT_MODEL'),
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    max_completion_tokens: maxTokens
-  }));
-  const text = response.choices[0]?.message?.content?.trim();
-  if (!text) throw new Error('OpenAI returned an empty chat response.');
-  return text;
 }

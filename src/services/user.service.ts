@@ -1,4 +1,5 @@
 import { User, AuditLog, GlobalRole } from '../database/models';
+import { UserFacingError } from '../errors';
 import { logger } from '../logger';
 
 // Load Super Admin IDs from environment
@@ -76,7 +77,7 @@ export async function getOrCreateUser(discordId: string, username: string): Prom
 export async function assignUserRole(actorId: string, targetDiscordId: string, role: GlobalRole): Promise<void> {
   const user = await User.findOne({ discordId: targetDiscordId });
   if (!user) {
-    throw new Error('Target user not found in database. Ask them to run `/auth` or `/register` first.');
+    throw new UserFacingError('Target user not found in database. Ask them to run `/auth` or `/register` first.');
   }
 
   if (user.roles.includes(role)) {
@@ -94,7 +95,7 @@ export async function assignUserRole(actorId: string, targetDiscordId: string, r
 export async function removeUserRole(actorId: string, targetDiscordId: string, role: GlobalRole): Promise<void> {
   const user = await User.findOne({ discordId: targetDiscordId });
   if (!user) {
-    throw new Error('Target user not found.');
+    throw new UserFacingError('Target user not found.');
   }
 
   user.roles = user.roles.filter(r => r !== role) as GlobalRole[];

@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { UserFacingError } from '../errors';
 import { Submission, SubmissionVersion, Team, Hackathon } from '../database/models';
 import { logAction } from './user.service';
 
@@ -29,31 +30,31 @@ export async function submitProject(
   const tId = new Types.ObjectId(teamId);
   const team = await Team.findById(tId);
   if (!team) {
-    throw new Error('Team not found.');
+    throw new UserFacingError('Team not found.');
   }
 
   if (team.leaderId !== leaderDiscordId) {
-    throw new Error('Only the team leader can submit the project.');
+    throw new UserFacingError('Only the team leader can submit the project.');
   }
 
   // Enforce team size constraint (Minimum 3 members)
   if (team.members.length < 3) {
-    throw new Error(`Your team has only ${team.members.length} members. Teams must have at least 3 members to submit.`);
+    throw new UserFacingError(`Your team has only ${team.members.length} members. Teams must have at least 3 members to submit.`);
   }
 
   // Validate hackathon status and timeline
   const hackathon = await Hackathon.findById(team.hackathonId);
   if (!hackathon) {
-    throw new Error('Hackathon not found.');
+    throw new UserFacingError('Hackathon not found.');
   }
 
   if (hackathon.status !== 'Submission Open') {
-    throw new Error(`Submissions are currently closed. Current status: ${hackathon.status}`);
+    throw new UserFacingError(`Submissions are currently closed. Current status: ${hackathon.status}`);
   }
 
   const now = new Date();
   if (now < hackathon.submissionStart || now > hackathon.submissionEnd) {
-    throw new Error('Submissions are closed based on the hackathon timeline.');
+    throw new UserFacingError('Submissions are closed based on the hackathon timeline.');
   }
 
   let submission = await Submission.findOne({ teamId: tId });

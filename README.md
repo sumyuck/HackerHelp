@@ -18,7 +18,7 @@ Discord /ask or @mention
   ├─ 3. Sensitive-case gate ──────── prize payment, account compromise, appeals, score disputes,
   │                                  conduct reports, data requests → always escalate to a human
   ├─ 4. Retrieval ─────────────────── OpenAI embedding → Supabase pgvector (top 6, floor 0.25)
-  ├─ 5. Model decision ────────────── JSON-schema output: answer | clarify | escalate | out_of_scope
+  ├─ 5. Model decision ────────────── Claude, JSON-schema output: answer | clarify | escalate | out_of_scope
   │                                  + cited section IDs + one-line justification
   └─ 6. Validation ────────────────── an answer must cite a section that was actually retrieved and
                                      scores ≥ 0.30, otherwise it is downgraded to an escalation
@@ -26,24 +26,32 @@ Discord /ask or @mention
 
 The model proposes and code decides. The model never sees a gated message, so it cannot answer a prize-payment question or be talked out of an escalation. Every answer shows its sources, and every decision is logged with its reason, best similarity, and latency.
 
-Thresholds come from measured data, not guesses: see [eval/RESULTS.md](eval/RESULTS.md). Retrieval found the right document for 24/24 answerable questions, and off-topic questions retrieved nothing above the floor.
+Thresholds come from measured data, not guesses: see [eval/RESULTS.md](eval/RESULTS.md). On 41 labelled cases the pipeline chose the correct outcome 41/41 times, and every answer cited an expected source (24/24).
 
 ## Features
 
 - **Grounded Q&A**: `/ask` and @mentions, with source links, verification labels for older or community-compiled facts, and a clear handoff when the bot won't answer.
 - **Curated knowledge base**: Markdown in [knowledge/](knowledge/) with front matter (source URL, verification level). `npm run kb:ingest` is idempotent: content hashes skip unchanged files, and each document is replaced atomically in one Postgres transaction.
 - **Evaluation harness**: `npm run eval:rag` runs 41 labelled cases covering paraphrases, Hinglish, sensitive requests, vague and off-topic messages, and prompt injection.
-- **Bounded retries**: OpenAI calls retry transient failures with capped, jittered backoff, and fail fast on quota exhaustion or long `Retry-After` instead of hanging Discord interactions ([src/services/retry.ts](src/services/retry.ts)).
+- **Bounded retries**: Anthropic and OpenAI calls retry transient failures with capped, jittered backoff, and fail fast on quota exhaustion or long `Retry-After` instead of hanging Discord interactions ([src/services/retry.ts](src/services/retry.ts)).
+- **Support tickets**: when the bot shouldn't answer, one click opens a ticket as a post in the `#hacker-help-desk` forum. The post is tagged by category and status, pings the moderator role, and carries a neutral AI summary, the reason the bot escalated, and what it found in the docs.
+  - **Duplicate detection**: compares canonical issue statements in pgvector. A participant's own repeat is merged into their open ticket; a previously resolved twin is offered first, with an "open anyway" button.
+  - **Lifecycle**: `open → assigned → waiting_user → resolved` is enforced by one tested state machine, with moderator-only transitions and optimistic concurrency. A participant replying in a waiting ticket hands it back automatically.
+  - **Learning from resolutions**: a moderator can add a resolution to the knowledge base, so the next person gets an answer instead of a ticket.
+  - **Deflection first**: `/ticket open` tries the knowledge base first. Answers carry "This solved it" / "I still need help" buttons, and every outcome is recorded as a support event.
 - **Additional sources**: admin upload of PDF, DOCX, Markdown, and text files, and indexing of a channel's recent history. Re-indexing replaces the previous version.
 - **Hackathon operations**: registration and profiles, teams (invites, leadership transfer), submissions with version history, judge rubric scoring and AI-assisted summaries, an announcement composer, roles, and audit logging.
 - **Operations**: startup config validation, liveness and readiness probes, graceful shutdown, a token-protected admin API, and structured JSON logs.
 ## Architecture
 
 ```text
-Discord ──► Discord.js bot ──► answer pipeline ──► OpenAI (embeddings, chat)
+Discord ──► Discord.js bot ──► answer pipeline ──► Anthropic Claude (decisions, drafting)
+                │                     ├──────────► OpenAI (embeddings)
                 │                     │
                 │                     └──────────► Supabase Postgres + pgvector
-                │                                  (documents, sections, upsert/match RPCs)
+                │                                  (documents, sections, ticket vectors)
+                ├──► ticket service ─────────────► MongoDB (tickets, support events)
+                │      └─ TicketChannel port ────► #hacker-help-desk forum posts
                 └──► hackathon services ─────────► MongoDB (users, teams, submissions,
                                                     judging, audit log)
 Express: /health, /ready, /api/* (bearer token)
@@ -53,7 +61,7 @@ See [explanation.md](explanation.md) for the code layout and data flow.
 
 ## Tech stack
 
-TypeScript on Node.js 24, Discord.js 14, OpenAI Node SDK, Supabase (Postgres, pgvector, Storage), MongoDB with Mongoose, Express, Docker Compose, GitHub Actions.
+TypeScript on Node.js 24, Discord.js 14, Anthropic SDK (Claude), OpenAI SDK (embeddings), Supabase (Postgres, pgvector, Storage), MongoDB with Mongoose, Express, Docker Compose, GitHub Actions.
 
 ## Setup
 
@@ -71,8 +79,9 @@ cp .env.example .env
 | `DISCORD_TOKEN` | Discord bot token |
 | `DISCORD_CLIENT_ID` | Discord application ID |
 | `DISCORD_GUILD_ID` | Development server ID for instant command registration; omit to register globally |
-| `OPENAI_API_KEY` | Server-side OpenAI API key (a project with billing enabled; the free tier allows 50 chat requests per day) |
-| `OPENAI_CHAT_MODEL` | Chat model with structured-output support, e.g. `gpt-4.1-mini` |
+| `ANTHROPIC_API_KEY` | Anthropic API key, used for answer decisions and drafting |
+| `ANTHROPIC_MODEL` | Optional Claude model; defaults to `claude-haiku-4-5`. Newer models (e.g. `claude-opus-5-5`, used for the recorded evals) also get `effort` and server-side refusal fallback |
+| `OPENAI_API_KEY` | OpenAI API key, used for embeddings only |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` (the schema uses 1536 dimensions) |
 | `MONGODB_URI` | MongoDB connection string (`MONGO_URI` accepted as a legacy fallback) |
 | `SUPABASE_URL` | Supabase project URL |
@@ -86,7 +95,7 @@ Startup validates this configuration and exits with a list of every missing or m
 
 ### 2. Supabase
 
-In a new Supabase project's SQL editor, run [supabase/schema.sql](supabase/schema.sql), then each file in [supabase/migrations/](supabase/migrations/) in order. Database functions are executable only by the service role.
+In a new Supabase project's SQL editor, run [supabase/schema.sql](supabase/schema.sql), then each file in [supabase/migrations/](supabase/migrations/) in order. For tickets, create a forum channel named `hacker-help-desk` and a `Moderator` role (or set `TICKET_FORUM_CHANNEL` / `TICKET_MODERATOR_ROLE`), and give the bot Manage Channels and Manage Threads so it can create tags and manage ticket threads. Database functions are executable only by the service role.
 
 If you change the embedding model, update the vector dimensions in the schema and re-run `npm run kb:ingest`. The content hash includes the model name, so every document is re-embedded.
 
@@ -114,8 +123,11 @@ Compose runs the bot and MongoDB. It publishes ports on loopback only, health-ch
 | `npm run register-commands` | Register slash commands |
 | `npm run kb:ingest` | Sync `knowledge/` to Supabase (`-- --prune` deletes removed docs, `-- --dry-run` previews) |
 | `npm run eval:rag` | Evaluate the answer pipeline (`-- --retrieval-only` makes no chat calls) |
+| `npm run eval:dedup` | Calibrate ticket duplicate detection (`-- --canonical` uses the classifier, as production does) |
 | `npm run seed` | Sample hackathon data |
 | `npm test` | Unit tests: config, API auth, chunking, triage rules, answer pipeline, retry policy. Network calls are mocked. |
+
+Ticket commands: `/ticket open`, `/ticket status`, and for moderators `/ticket assign`, `/ticket waiting`, `/ticket resolve` (optionally `add_to_knowledge_base`), and `/ticket reopen`. Inside a ticket thread the ticket number can be omitted.
 
 Operators can also `POST /api/documents/upload` (multipart `file`, `Authorization: Bearer <ADMIN_API_TOKEN>`). Admins can run `/index channel` in Discord.
 

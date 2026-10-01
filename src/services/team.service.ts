@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { UserFacingError } from '../errors';
 import { Team, Hackathon, Registration } from '../database/models';
 import { logAction } from './user.service';
 
@@ -20,25 +21,25 @@ export async function createTeam(
   // Validate hackathon status
   const hackathon = await Hackathon.findById(hId);
   if (!hackathon) {
-    throw new Error('Hackathon not found.');
+    throw new UserFacingError('Hackathon not found.');
   }
 
   // Ensure leader is registered
   const registration = await Registration.findOne({ userId: leaderDiscordId, hackathonId: hId });
   if (!registration) {
-    throw new Error('You must register for the hackathon first before creating a team.');
+    throw new UserFacingError('You must register for the hackathon first before creating a team.');
   }
 
   // Ensure team name is unique inside the hackathon
   const existingTeamName = await Team.findOne({ hackathonId: hId, name: { $regex: new RegExp(`^${teamName}$`, 'i') } });
   if (existingTeamName) {
-    throw new Error(`A team named "${teamName}" already exists for this hackathon.`);
+    throw new UserFacingError(`A team named "${teamName}" already exists for this hackathon.`);
   }
 
   // Check if leader is already on a team
   const existingUserTeam = await Team.findOne({ hackathonId: hId, members: leaderDiscordId });
   if (existingUserTeam) {
-    throw new Error('You are already a member of a team for this hackathon!');
+    throw new UserFacingError('You are already a member of a team for this hackathon!');
   }
 
   const team = await Team.create({
@@ -67,29 +68,29 @@ export async function inviteToTeam(
 ): Promise<void> {
   const team = await Team.findById(new Types.ObjectId(teamId));
   if (!team) {
-    throw new Error('Team not found.');
+    throw new UserFacingError('Team not found.');
   }
 
   if (team.leaderId !== inviterDiscordId) {
-    throw new Error('Only the team leader can invite members.');
+    throw new UserFacingError('Only the team leader can invite members.');
   }
 
   // Check if max members reached
   const maxConfig = 5; // Configurable max team size
   if (team.members.length >= maxConfig) {
-    throw new Error(`Team is already full! Maximum size is ${maxConfig}.`);
+    throw new UserFacingError(`Team is already full! Maximum size is ${maxConfig}.`);
   }
 
   // Ensure invitee is registered
   const registration = await Registration.findOne({ userId: inviteeDiscordId, hackathonId: team.hackathonId });
   if (!registration) {
-    throw new Error('The invited user has not registered for this hackathon yet.');
+    throw new UserFacingError('The invited user has not registered for this hackathon yet.');
   }
 
   // Ensure invitee is not in another team
   const existingUserTeam = await Team.findOne({ hackathonId: team.hackathonId, members: inviteeDiscordId });
   if (existingUserTeam) {
-    throw new Error('The invited user is already on another team.');
+    throw new UserFacingError('The invited user is already on another team.');
   }
 
   // Check if invite is already pending
@@ -97,7 +98,7 @@ export async function inviteToTeam(
     inv => inv.userId === inviteeDiscordId && inv.status === 'pending'
   );
   if (alreadyInvited) {
-    throw new Error('An invitation is already pending for this user.');
+    throw new UserFacingError('An invitation is already pending for this user.');
   }
 
   // Add invitation
@@ -118,14 +119,14 @@ export async function handleInvitation(
 ): Promise<void> {
   const team = await Team.findById(new Types.ObjectId(teamId));
   if (!team) {
-    throw new Error('Team not found.');
+    throw new UserFacingError('Team not found.');
   }
 
   const invitation = team.invitations.find(
     inv => inv.userId === userDiscordId && inv.status === 'pending'
   );
   if (!invitation) {
-    throw new Error('No pending invitation found for this team.');
+    throw new UserFacingError('No pending invitation found for this team.');
   }
 
   if (accept) {
@@ -134,7 +135,7 @@ export async function handleInvitation(
     if (existingUserTeam) {
       invitation.status = 'rejected';
       await team.save();
-      throw new Error('You have already joined another team. Invitation auto-rejected.');
+      throw new UserFacingError('You have already joined another team. Invitation auto-rejected.');
     }
 
     invitation.status = 'accepted';
@@ -156,11 +157,11 @@ export async function handleInvitation(
 export async function leaveTeam(userDiscordId: string, teamId: string): Promise<void> {
   const team = await Team.findById(new Types.ObjectId(teamId));
   if (!team) {
-    throw new Error('Team not found.');
+    throw new UserFacingError('Team not found.');
   }
 
   if (!team.members.includes(userDiscordId)) {
-    throw new Error('You are not a member of this team.');
+    throw new UserFacingError('You are not a member of this team.');
   }
 
   if (team.leaderId === userDiscordId) {
@@ -170,7 +171,7 @@ export async function leaveTeam(userDiscordId: string, teamId: string): Promise<
       await logAction(userDiscordId, 'delete_team', 'Team', teamId, { reason: 'Leader left only member team' });
       return;
     } else {
-      throw new Error('You are the leader. Please transfer ownership to another member before leaving, or use `/team delete`.');
+      throw new UserFacingError('You are the leader. Please transfer ownership to another member before leaving, or use `/team delete`.');
     }
   }
 
@@ -189,15 +190,15 @@ export async function transferLeadership(
 ): Promise<void> {
   const team = await Team.findById(new Types.ObjectId(teamId));
   if (!team) {
-    throw new Error('Team not found.');
+    throw new UserFacingError('Team not found.');
   }
 
   if (team.leaderId !== leaderDiscordId) {
-    throw new Error('Only the team leader can transfer leadership.');
+    throw new UserFacingError('Only the team leader can transfer leadership.');
   }
 
   if (!team.members.includes(newLeaderDiscordId)) {
-    throw new Error('The target user is not a member of this team.');
+    throw new UserFacingError('The target user is not a member of this team.');
   }
 
   team.leaderId = newLeaderDiscordId;
@@ -215,19 +216,19 @@ export async function removeMember(
 ): Promise<void> {
   const team = await Team.findById(new Types.ObjectId(teamId));
   if (!team) {
-    throw new Error('Team not found.');
+    throw new UserFacingError('Team not found.');
   }
 
   if (team.leaderId !== leaderDiscordId) {
-    throw new Error('Only the team leader can remove members.');
+    throw new UserFacingError('Only the team leader can remove members.');
   }
 
   if (targetDiscordId === leaderDiscordId) {
-    throw new Error('You cannot remove yourself. Use ownership transfer and leave instead.');
+    throw new UserFacingError('You cannot remove yourself. Use ownership transfer and leave instead.');
   }
 
   if (!team.members.includes(targetDiscordId)) {
-    throw new Error('Member not found in the team.');
+    throw new UserFacingError('Member not found in the team.');
   }
 
   team.members = team.members.filter(m => m !== targetDiscordId);
@@ -241,11 +242,11 @@ export async function removeMember(
 export async function deleteTeam(leaderDiscordId: string, teamId: string): Promise<void> {
   const team = await Team.findById(new Types.ObjectId(teamId));
   if (!team) {
-    throw new Error('Team not found.');
+    throw new UserFacingError('Team not found.');
   }
 
   if (team.leaderId !== leaderDiscordId) {
-    throw new Error('Only the team leader can delete the team.');
+    throw new UserFacingError('Only the team leader can delete the team.');
   }
 
   await Team.findByIdAndDelete(team._id);

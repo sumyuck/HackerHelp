@@ -1,0 +1,31 @@
+{
+  "description": "Ticket pairs for calibrating duplicate detection. `same` pairs describe the same problem in different words; `different` pairs are hard negatives that share vocabulary or category but need different handling.",
+  "same": [
+    ["I didn't get the problem statement email", "the challenge started but no email with the problem arrived"],
+    ["My log.txt file isn't being created", "AGENTS.md logging isn't writing my chat transcript anywhere"],
+    ["I haven't received my prize money for September", "Still waiting on the $300 payout from last month's contest"],
+    ["The AI interview link says expired", "Can't open my judge interview, the link has expired"],
+    ["Camera not working in the AI interview", "the interview page won't detect my webcam"],
+    ["Submission upload keeps failing", "I get an error every time I try to upload my zip"],
+    ["Where is my feedback email?", "never received the Orchestrate feedback mail"],
+    ["Can I retake the interview? My internet dropped", "Connection died mid-interview, is a second attempt possible?"],
+    ["My rank on the leaderboard seems wrong", "I think my score was calculated incorrectly"],
+    ["I can't log in to my HackerRank account", "login fails on hackerrank, it says invalid credentials"],
+    ["mera interview link kaam nahi kar raha", "my interview link isn't working"],
+    ["When will the merchandise be shipped?", "I haven't got the HackerRank swag yet"]
+  ],
+  "different": [
+    ["I didn't get the problem statement email", "I didn't get my feedback email"],
+    ["My log.txt file isn't being created", "My output.csv is missing some rows"],
+    ["I haven't received my prize money for September", "When are the October results announced?"],
+    ["The AI interview link says expired", "How long is the AI judge interview?"],
+    ["Camera not working in the AI interview", "My microphone isn't detected in the interview"],
+    ["Submission upload keeps failing", "Can I update my submission after uploading it?"],
+    ["I can't log in to my HackerRank account", "I want to delete my HackerRank account"],
+    ["My rank on the leaderboard seems wrong", "How is the final score calculated?"],
+    ["I haven't got the HackerRank swag yet", "I haven't received my prize money"],
+    ["The AI interview link says expired", "The problem statement email never arrived"],
+    ["How do I register for the October edition?", "Can I change my registered email address?"],
+    ["Can I retake the interview? My internet dropped", "Can I resubmit my code after the deadline?"]
+  ]
+}

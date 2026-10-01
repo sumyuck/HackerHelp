@@ -8,7 +8,7 @@ const REQUIRED = [
   'DISCORD_TOKEN',
   'DISCORD_CLIENT_ID',
   'OPENAI_API_KEY',
-  'OPENAI_CHAT_MODEL',
+  'ANTHROPIC_API_KEY',
   'OPENAI_EMBEDDING_MODEL',
   'SUPABASE_URL',
   'SUPABASE_SERVICE_ROLE_KEY'
@@ -36,7 +36,7 @@ export function validateStartupConfig(env: NodeJS.ProcessEnv = process.env): str
     problems.push('ADMIN_API_TOKEN must be at least 32 characters (generate one with `openssl rand -hex 32`)');
   }
 
-  for (const name of ['RAG_RETRIEVAL_FLOOR', 'RAG_ANSWER_MIN_SIMILARITY'] as const) {
+  for (const name of ['RAG_RETRIEVAL_FLOOR', 'RAG_ANSWER_MIN_SIMILARITY', 'TICKET_DUPLICATE_SIMILARITY', 'TICKET_RELATED_SIMILARITY'] as const) {
     const value = env[name];
     if (value !== undefined && value !== '' && !(Number(value) >= 0 && Number(value) <= 1)) {
       problems.push(`${name} must be a number between 0 and 1`);

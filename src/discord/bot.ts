@@ -9,6 +9,8 @@ import {
 import { handleSlashCommandInteraction, handleRegisterModalSubmit } from './commands-handler';
 import { answerQuestion } from '../services/answer.service';
 import { buildAnswerEmbed } from './answer-presenter';
+import { handleTicketButton, handleTicketThreadMessage, supportFollowUp } from './ticket-interactions';
+import { initTicketForum } from './ticket-forum';
 import { logger } from '../logger';
 
 // Initialize client with required intents
@@ -36,8 +38,9 @@ export async function startDiscordBot(): Promise<void> {
   }
 
   // Event: Ready
-  client.once(Events.ClientReady, (readyClient) => {
+  client.once(Events.ClientReady, async (readyClient) => {
     logger.info(`Discord Bot connected and ready as user: ${readyClient.user.tag}`);
+    await initTicketForum(readyClient);
   });
 
   // Event: Interaction Creation (Slash Commands & Modals)
@@ -45,6 +48,8 @@ export async function startDiscordBot(): Promise<void> {
     try {
       if (interaction.isChatInputCommand()) {
         await handleSlashCommandInteraction(interaction);
+      } else if (interaction.isButton() && interaction.customId.startsWith('tk:')) {
+        await handleTicketButton(interaction);
       } else if (interaction.isModalSubmit() && interaction.customId === 'register_modal') {
         await handleRegisterModalSubmit(interaction);
       }
@@ -57,6 +62,10 @@ export async function startDiscordBot(): Promise<void> {
   // Event: Message Creation (AI assistant mentions)
   client.on('messageCreate', async (message: Message) => {
     if (message.author.bot) return;
+
+    // A participant replying in their ticket thread un-blocks a "waiting on participant" ticket.
+    await handleTicketThreadMessage(message).catch(error =>
+      logger.error('Failed to process ticket thread message', { messageId: message.id, error }));
 
     const botUser = client.user;
     // Direct mentions only: mentions.has() is also true for @everyone and role pings,
@@ -77,7 +86,10 @@ export async function startDiscordBot(): Promise<void> {
 
       if ('sendTyping' in message.channel) await message.channel.sendTyping();
       const result = await answerQuestion(question);
-      await message.reply({ embeds: [buildAnswerEmbed(result)], allowedMentions: { repliedUser: true } });
+      const components = await supportFollowUp(result, {
+        id: message.id, guildId: message.guildId, userId: message.author.id, userTag: message.author.tag, question
+      });
+      await message.reply({ embeds: [buildAnswerEmbed(result)], components, allowedMentions: { repliedUser: true } });
     } catch (error) {
       logger.error('Failed to answer mention message', { messageId: message.id, error });
       await message.reply({
