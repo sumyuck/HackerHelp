@@ -1,20 +1,9 @@
 import { REST, Routes } from 'discord.js';
 import { commandsDefinitions } from './command-definitions';
 import dotenv from 'dotenv';
-import winston from 'winston';
+import { logger } from '../logger';
 
 dotenv.config();
-
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.DISCORD_CLIENT_ID;

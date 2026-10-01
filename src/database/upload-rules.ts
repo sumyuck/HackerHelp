@@ -17,21 +17,16 @@ async function upload() {
   const formData = new FormData();
   formData.append('file', blob, 'rules.txt');
   
-  // Get admin actorId
-  const superAdminIds = (process.env.SUPER_ADMIN_IDS || '')
-    .split(',')
-    .map(id => id.trim())
-    .filter(Boolean);
-    
-  const actorId = superAdminIds[0];
-  if (!actorId) throw new Error('Set SUPER_ADMIN_IDS before uploading rules.');
-  formData.append('actorId', actorId);
+  const token = process.env.ADMIN_API_TOKEN?.trim();
+  if (!token) throw new Error('Set ADMIN_API_TOKEN in .env before uploading rules.');
 
   const port = process.env.PORT || 3000;
-  console.log(`Uploading rules.txt to http://localhost:${port}/api/documents/upload using actorId: ${actorId} ...`);
+  console.log(`Uploading rules.txt to http://localhost:${port}/api/documents/upload ...`);
 
   try {
-    const response = await axios.post(`http://localhost:${port}/api/documents/upload`, formData);
+    const response = await axios.post(`http://localhost:${port}/api/documents/upload`, formData, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
     console.log('Upload Response Success:', response.data);
   } catch (error: any) {
     console.error('Upload failed:', error.response?.data || error.message);

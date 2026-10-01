@@ -1,19 +1,8 @@
 import { Request, Response } from 'express';
 import { parsePdfToMarkdown, parseDocxToMarkdown } from '../services/parser.service';
 import { uploadToDocMindStorage } from '../services/docmind.service';
-import { logAction, hasRole } from '../services/user.service';
-import winston from 'winston';
-
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+import { logAction } from '../services/user.service';
+import { logger } from '../logger';
 
 /**
  * Controller to upload, parse, and register lightweight documents
@@ -27,18 +16,8 @@ export async function uploadDocument(req: Request, res: Response): Promise<void>
       return;
     }
 
-    const { actorId } = req.body;
-    if (!actorId) {
-      res.status(400).json({ success: false, error: 'Actor Discord ID (actorId) is required for audit logs.' });
-      return;
-    }
-
-    // Enforce Admin Permission Checks
-    const isAdmin = await hasRole(actorId, ['super_admin', 'event_admin']);
-    if (!isAdmin) {
-      res.status(403).json({ success: false, error: 'Access Denied: Only administrators can upload and index documents.' });
-      return;
-    }
+    // Authorization is enforced by requireAdminToken; the audit actor is the API credential.
+    const actorId = 'admin-api';
 
     const originalName = file.originalname;
     const fileExtension = originalName.substring(originalName.lastIndexOf('.')).toLowerCase();
@@ -89,8 +68,7 @@ export async function uploadDocument(req: Request, res: Response): Promise<void>
     logger.error('Document upload and parse pipeline failed:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to process and index the document.',
-      details: error.message
+      error: 'Failed to process and index the document.'
     });
   }
 }

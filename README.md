@@ -78,6 +78,8 @@ Fill in `.env` with your own credentials. Real `.env` files are ignored by Git a
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side Supabase service role key |
 | `SUPABASE_DOCUMENT_OWNER_ID` | Optional existing Supabase Auth user UUID if your document schema requires a creator |
 | `SUPER_ADMIN_IDS` | Comma-separated Discord user IDs with administrator access |
+| `ADMIN_API_TOKEN` | Bearer token for the operator-only HTTP API (`/api/*`), at least 32 characters. If unset, the API is disabled (503). Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `LOG_LEVEL` | Optional winston log level; defaults to `info` |
 | `PORT` | HTTP port; defaults to `3000` |
 
 OpenAI models must be configured explicitly; the sample values in `.env.example` are starting points. The included vector schema expects **1536 dimensions**, matching `text-embedding-3-small`. If you change embedding models, adjust the schema to that model's output dimensions and re-index all documents. API calls require an OpenAI API project with access and billing configured. [OpenAI embedding documentation](https://developers.openai.com/api/docs/guides/embeddings).
@@ -121,7 +123,7 @@ npm run build
 npm start
 ```
 
-For development, use `npm run dev`. The bot and API run together; the health endpoint is `http://localhost:3000/health` by default.
+For development, use `npm run dev`. The bot and API run together. Startup validates required configuration and exits with a list of every missing or malformed variable. `GET /health` is a liveness probe (process up); `GET /ready` is a readiness probe that returns 503 until MongoDB and the Discord gateway are both connected. `SIGTERM`/`SIGINT` trigger a graceful shutdown (HTTP server, Discord gateway, then MongoDB) with a 10-second hard limit.
 
 ### 5. Index documentation
 
@@ -131,7 +133,7 @@ Edit [rules.txt](rules.txt) for your event. With the app running, upload it from
 npm run upload-rules
 ```
 
-The script uses the first `SUPER_ADMIN_IDS` entry. Administrators can also upload `.pdf`, `.docx`, `.md`, or `.txt` files (up to 10 MB) through `POST /api/documents/upload` using multipart fields `file` and `actorId`, or index channel history through `/index channel`. `/index reindex` currently reports indexing status; it does not regenerate embeddings. Re-upload source documents when rebuilding the vector index.
+The script authenticates with `ADMIN_API_TOKEN`. Operators can also upload `.pdf`, `.docx`, `.md`, or `.txt` files (up to 10 MB) through `POST /api/documents/upload` with an `Authorization: Bearer <ADMIN_API_TOKEN>` header and a multipart `file` field, or index channel history through `/index channel`. `/index reindex` currently reports indexing status; it does not regenerate embeddings. Re-upload source documents when rebuilding the vector index.
 
 Try `/auth`, `/register`, `/help`, and `/ask` in Discord, or mention the bot with a question about the indexed rules.
 
@@ -157,4 +159,4 @@ After configuring `.env` and Supabase:
 docker compose up --build
 ```
 
-Compose runs the bot/API and MongoDB, sets the app's MongoDB host to `mongodb`, and persists database data in a named volume. Supabase and OpenAI remain external services. Container builds use the checked-in lockfile and exclude local credentials.
+Compose runs the bot/API and MongoDB, publishes ports on loopback only, health-checks the app through `/ready`, restarts containers on failure, sets the app's MongoDB host to `mongodb`, and persists database data in a named volume. Supabase and OpenAI remain external services. Container builds use the checked-in lockfile and exclude local credentials.

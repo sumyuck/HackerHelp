@@ -1,17 +1,6 @@
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
-import winston from 'winston';
-
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+import { logger } from '../logger';
 
 /**
  * Extracts raw text from a PDF buffer and returns a clean Markdown string.

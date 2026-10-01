@@ -1,17 +1,6 @@
 import mongoose from 'mongoose';
 import { calculateWeightedScore, validateTeamSize } from './test-helpers';
-import winston from 'winston';
-
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+import { logger } from '../logger';
 
 // A lightweight mock unit test structure to verify constraints
 async function runTests() {

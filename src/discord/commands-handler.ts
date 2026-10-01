@@ -16,18 +16,7 @@ import * as submissionService from '../services/submission.service';
 import * as judgeService from '../services/judge.service';
 import * as docmindService from '../services/docmind.service';
 import { Hackathon, Track, Team, Registration, Submission, User, GlobalRole, JudgeEvaluation } from '../database/models';
-import winston from 'winston';
-
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+import { logger } from '../logger';
 
 /**
  * Main entrance router for all slash command interactions.

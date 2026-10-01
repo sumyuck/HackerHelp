@@ -6,8 +6,11 @@ HackerHelp combines Discord workflows, an Express API, MongoDB operational data,
 
 ```text
 src/
-├── index.ts                    # Loads configuration and starts MongoDB, HTTP, and Discord
-├── app.ts                      # Express middleware, routes, and health endpoint
+├── index.ts                    # Validates config, starts MongoDB, HTTP, and Discord; graceful shutdown
+├── config.ts                   # Startup configuration validation
+├── logger.ts                   # Shared structured JSON logger
+├── app.ts                      # Express middleware, routes, liveness and readiness probes
+├── middleware/admin-auth.ts    # Bearer-token guard for the operator HTTP API
 ├── controllers/                # Document upload and aggregate metrics
 ├── routes/api.ts               # HTTP route definitions
 ├── database/                   # Mongoose models, connection, sample seed, rules uploader
@@ -18,7 +21,7 @@ src/
 │   ├── docmind.service.ts      # Supabase storage, chunking, retrieval, grounded chat
 │   ├── parser.service.ts       # PDF and DOCX text extraction
 │   └── *.service.ts            # User, event, team, submission, and judging workflows
-└── tests/                      # Existing constraints checks and RAG regression tests
+└── tests/                      # Constraints checks, RAG regression, config and API-auth tests
 supabase/schema.sql             # Fresh-project storage and vector schema
 ```
 
@@ -57,7 +60,7 @@ The fresh-project schema uses `vector(1536)` for `text-embedding-3-small`. Exist
 
 ## Runtime and Interfaces
 
-The entry point loads `.env`, connects to MongoDB, starts Express, and logs in to Discord. `/health` reports process availability. `/api/documents/upload` parses and indexes documentation; `/api/analytics` returns existing aggregate metrics. HTTP authentication is not implemented, so keep these endpoints within a trusted admin environment.
+The entry point loads `.env`, validates configuration (`src/config.ts`), connects to MongoDB, starts Express, and logs in to Discord; it shuts these down in reverse order on `SIGTERM`/`SIGINT`. `/health` reports process liveness and `/ready` reports MongoDB and Discord connectivity. `/api/documents/upload` parses and indexes documentation; `/api/analytics` returns existing aggregate metrics. Every `/api/*` route requires `Authorization: Bearer <ADMIN_API_TOKEN>` (`src/middleware/admin-auth.ts`, constant-time comparison); the API is disabled when no token is configured. Request-body identity claims such as Discord user IDs are never treated as credentials.
 
 Slash command definitions and registration remain in `src/discord`. Roles include participant, mentor, judge, track admin, event admin, and super admin. Operational actions write MongoDB audit records.
 

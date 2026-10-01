@@ -1,24 +1,14 @@
 import { 
   Client, 
-  GatewayIntentBits, 
+  Events,
+  GatewayIntentBits,
   Interaction, 
   Message,
   Partials 
 } from 'discord.js';
 import { handleSlashCommandInteraction, handleRegisterModalSubmit } from './commands-handler';
 import { askDocMindRAG } from '../services/docmind.service';
-import winston from 'winston';
-
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+import { logger } from '../logger';
 
 // Initialize client with required intents
 export const client = new Client({
@@ -45,19 +35,21 @@ export async function startDiscordBot(): Promise<void> {
   }
 
   // Event: Ready
-  client.once('ready', (readyClient) => {
+  client.once(Events.ClientReady, (readyClient) => {
     logger.info(`Discord Bot connected and ready as user: ${readyClient.user.tag}`);
   });
 
   // Event: Interaction Creation (Slash Commands & Modals)
   client.on('interactionCreate', async (interaction: Interaction) => {
-    if (interaction.isChatInputCommand()) {
-      await handleSlashCommandInteraction(interaction);
-    } 
-    else if (interaction.isModalSubmit()) {
-      if (interaction.customId === 'register_modal') {
+    try {
+      if (interaction.isChatInputCommand()) {
+        await handleSlashCommandInteraction(interaction);
+      } else if (interaction.isModalSubmit() && interaction.customId === 'register_modal') {
         await handleRegisterModalSubmit(interaction);
       }
+    } catch (error) {
+      // Last-resort guard: an escaped handler error must not become an unhandled rejection.
+      logger.error('Unhandled error while processing interaction', { interactionId: interaction.id, error });
     }
   });
 
@@ -106,14 +98,16 @@ export async function startDiscordBot(): Promise<void> {
         await message.reply({
           content: 'Sorry, I had trouble reaching the AI assistant database. Please try again later.',
           allowedMentions: { repliedUser: true }
-        });
+        }).catch(replyError => logger.error('Failed to send fallback reply', { error: replyError }));
       }
     }
   });
 
-  try {
-    await client.login(token);
-  } catch (error) {
-    logger.error('Failed to login bot to Discord client:', error);
-  }
+  // A bot that cannot log in is useless; let bootstrap fail so the orchestrator restarts or alerts.
+  await client.login(token);
+}
+
+/** Closes the gateway connection so Discord marks the bot offline promptly. */
+export async function stopDiscordBot(): Promise<void> {
+  if (client.isReady()) await client.destroy();
 }

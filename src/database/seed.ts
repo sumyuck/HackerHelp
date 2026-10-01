@@ -1,16 +1,7 @@
 import 'dotenv/config';
 import { connectDatabase } from './connection';
 import { Hackathon, Track } from './models';
-import winston from 'winston';
-
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [new winston.transports.Console()]
-});
+import { logger } from '../logger';
 
 async function seed() {
   await connectDatabase();
