@@ -85,3 +85,6 @@ Thumbs.db
 
 # Eval run output (summaries are recorded in eval/RESULTS.md)
 eval/results/
+
+# Personal start-up notes
+START.md

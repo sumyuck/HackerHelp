@@ -1,5 +1,6 @@
 import { 
   ChatInputCommandInteraction, 
+  MessageFlags,
   EmbedBuilder, 
   ModalBuilder, 
   TextInputBuilder, 
@@ -81,7 +82,7 @@ export async function handleSlashCommandInteraction(interaction: ChatInputComman
         await handleAdminCommands(interaction);
         break;
       default:
-        await interaction.reply({ content: 'Unknown command.', ephemeral: true });
+        await interaction.reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral });
     }
   } catch (error: any) {
     logger.error(`Error executing command ${commandName}:`, error);
@@ -91,9 +92,9 @@ export async function handleSlashCommandInteraction(interaction: ChatInputComman
       .setDescription(userMessage(error));
     
     if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ embeds: [errorEmbed], ephemeral: true }).catch(() => {});
+      await interaction.followUp({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral }).catch(() => {});
     } else {
-      await interaction.reply({ embeds: [errorEmbed], ephemeral: true }).catch(() => {});
+      await interaction.reply({ embeds: [errorEmbed], flags: MessageFlags.Ephemeral }).catch(() => {});
     }
   }
 }
@@ -114,7 +115,7 @@ async function handleAuth(interaction: ChatInputCommandInteraction): Promise<voi
     )
     .setFooter({ text: 'HackerHelp | Grounded AI Companion' });
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 /**
@@ -126,7 +127,7 @@ async function handleRegisterRequest(interaction: ChatInputCommandInteraction): 
   if (!activeHackathon) {
     await interaction.reply({
       content: 'There is no active hackathon accepting registrations right now.',
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
     return;
   }
@@ -136,7 +137,7 @@ async function handleRegisterRequest(interaction: ChatInputCommandInteraction): 
   if (existing) {
     await interaction.reply({
       content: `You have already registered for **${activeHackathon.name}**! Run \`/profile\` to view your details.`,
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
     return;
   }
@@ -196,7 +197,7 @@ async function handleRegisterRequest(interaction: ChatInputCommandInteraction): 
  * Modal submit handler for registration
  */
 export async function handleRegisterModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const activeHackathon = await Hackathon.findOne({ status: 'Registration Open' });
   if (!activeHackathon) {
@@ -273,7 +274,7 @@ async function handleProfile(interaction: ChatInputCommandInteraction): Promise<
   if (!reg) {
     await interaction.reply({
       content: 'You have not registered for any hackathons yet! Use `/register` to register for the active hackathon.',
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
     return;
   }
@@ -297,7 +298,7 @@ async function handleProfile(interaction: ChatInputCommandInteraction): Promise<
       { name: 'Experience', value: reg.experience }
     );
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 /**
@@ -316,7 +317,7 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
       { name: 'Judge & Admin Commands', value: '`/judge dashboard` - Score panel\n`/admin analytics` - Hackathon metrics\n`/admin settings` - Modify hackathon status\n`/admin roles` - Adjust users permissions' }
     );
 
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
 }
 
 /**
@@ -342,7 +343,7 @@ async function handleTrackCommands(interaction: ChatInputCommandInteraction): Pr
   if (subcommand === 'list') {
     const tracks = await Track.find().populate('hackathonId');
     if (tracks.length === 0) {
-      await interaction.reply({ content: 'No tracks registered in the database.', ephemeral: true });
+      await interaction.reply({ content: 'No tracks registered in the database.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -358,18 +359,18 @@ async function handleTrackCommands(interaction: ChatInputCommandInteraction): Pr
       });
     });
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   } 
   else if (subcommand === 'info') {
     const trackId = interaction.options.getString('track_id', true);
     if (!Types.ObjectId.isValid(trackId)) {
-      await interaction.reply({ content: 'Invalid Track ID format.', ephemeral: true });
+      await interaction.reply({ content: 'Invalid Track ID format.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     const track = await Track.findById(new Types.ObjectId(trackId)).populate('hackathonId');
     if (!track) {
-      await interaction.reply({ content: 'Track not found.', ephemeral: true });
+      await interaction.reply({ content: 'Track not found.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -386,7 +387,7 @@ async function handleTrackCommands(interaction: ChatInputCommandInteraction): Pr
         { name: 'Max Teams Limit', value: track.maxTeams ? track.maxTeams.toString() : 'Unlimited', inline: true }
       );
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -399,7 +400,7 @@ async function handleHackathonCommands(interaction: ChatInputCommandInteraction)
   if (subcommand === 'list') {
     const hackathons = await Hackathon.find();
     if (hackathons.length === 0) {
-      await interaction.reply({ content: 'No hackathons registered in the database.', ephemeral: true });
+      await interaction.reply({ content: 'No hackathons registered in the database.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -414,18 +415,18 @@ async function handleHackathonCommands(interaction: ChatInputCommandInteraction)
       });
     });
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   } 
   else if (subcommand === 'info') {
     const hackathonId = interaction.options.getString('hackathon_id', true);
     if (!Types.ObjectId.isValid(hackathonId)) {
-      await interaction.reply({ content: 'Invalid Hackathon ID format.', ephemeral: true });
+      await interaction.reply({ content: 'Invalid Hackathon ID format.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     const h = await Hackathon.findById(new Types.ObjectId(hackathonId));
     if (!h) {
-      await interaction.reply({ content: 'Hackathon not found.', ephemeral: true });
+      await interaction.reply({ content: 'Hackathon not found.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -442,7 +443,7 @@ async function handleHackathonCommands(interaction: ChatInputCommandInteraction)
         { name: 'Winner Announcement', value: h.resultDate.toDateString(), inline: true }
       );
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -458,14 +459,14 @@ async function handleTeamCommands(interaction: ChatInputCommandInteraction): Pro
     const trackId = interaction.options.getString('track_id', true);
 
     if (!Types.ObjectId.isValid(trackId)) {
-      await interaction.reply({ content: 'Invalid Track ID.', ephemeral: true });
+      await interaction.reply({ content: 'Invalid Track ID.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     // Check if track exists
     const track = await Track.findById(new Types.ObjectId(trackId));
     if (!track) {
-      await interaction.reply({ content: 'Track not found.', ephemeral: true });
+      await interaction.reply({ content: 'Track not found.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -488,7 +489,7 @@ async function handleTeamCommands(interaction: ChatInputCommandInteraction): Pro
     // Find inviter's team
     const team = await Team.findOne({ members: discordId });
     if (!team) {
-      await interaction.reply({ content: 'You are not in any team. Create one first with `/team create`.', ephemeral: true });
+      await interaction.reply({ content: 'You are not in any team. Create one first with `/team create`.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -518,7 +519,7 @@ async function handleTeamCommands(interaction: ChatInputCommandInteraction): Pro
   else if (subcommand === 'info') {
     const team = await Team.findOne({ members: discordId }).populate('trackId').populate('hackathonId');
     if (!team) {
-      await interaction.reply({ content: 'You are not on a team.', ephemeral: true });
+      await interaction.reply({ content: 'You are not on a team.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -535,17 +536,17 @@ async function handleTeamCommands(interaction: ChatInputCommandInteraction): Pro
         { name: 'Members', value: team.members.map(m => `<@${m}>`).join(', ') }
       );
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   } 
   else if (subcommand === 'leave') {
     const team = await Team.findOne({ members: discordId });
     if (!team) {
-      await interaction.reply({ content: 'You are not on a team.', ephemeral: true });
+      await interaction.reply({ content: 'You are not on a team.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     await teamService.leaveTeam(discordId, team._id.toString());
-    await interaction.reply({ content: `You have successfully left team **${team.name}**.`, ephemeral: true });
+    await interaction.reply({ content: `You have successfully left team **${team.name}**.`, flags: MessageFlags.Ephemeral });
   } 
   else if (subcommand === 'edit') {
     const name = interaction.options.getString('name');
@@ -553,26 +554,26 @@ async function handleTeamCommands(interaction: ChatInputCommandInteraction): Pro
 
     const team = await Team.findOne({ leaderId: discordId });
     if (!team) {
-      await interaction.reply({ content: 'Only the team leader can edit team properties.', ephemeral: true });
+      await interaction.reply({ content: 'Only the team leader can edit team properties.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     if (name) team.name = name;
     if (trackId) {
       if (!Types.ObjectId.isValid(trackId)) {
-        await interaction.reply({ content: 'Invalid track ID.', ephemeral: true });
+        await interaction.reply({ content: 'Invalid track ID.', flags: MessageFlags.Ephemeral });
         return;
       }
       team.trackId = new Types.ObjectId(trackId);
     }
     await team.save();
 
-    await interaction.reply({ content: 'Team profile updated successfully!', ephemeral: true });
+    await interaction.reply({ content: 'Team profile updated successfully!', flags: MessageFlags.Ephemeral });
   } 
   else if (subcommand === 'delete') {
     const team = await Team.findOne({ leaderId: discordId });
     if (!team) {
-      await interaction.reply({ content: 'Only the team leader can delete/disband the team.', ephemeral: true });
+      await interaction.reply({ content: 'Only the team leader can delete/disband the team.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -591,7 +592,7 @@ async function handleSubmissionCommands(interaction: ChatInputCommandInteraction
   // Find team
   const team = await Team.findOne({ members: discordId });
   if (!team) {
-    await interaction.reply({ content: 'You must be on a team to submit projects.', ephemeral: true });
+    await interaction.reply({ content: 'You must be on a team to submit projects.', flags: MessageFlags.Ephemeral });
     return;
   }
 
@@ -635,7 +636,7 @@ async function handleSubmissionCommands(interaction: ChatInputCommandInteraction
   else if (subcommand === 'update') {
     const submission = await Submission.findOne({ teamId: team._id });
     if (!submission) {
-      await interaction.reply({ content: 'You have not submitted a project yet! Use `/submission create` first.', ephemeral: true });
+      await interaction.reply({ content: 'You have not submitted a project yet! Use `/submission create` first.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -676,7 +677,7 @@ async function handleSubmissionCommands(interaction: ChatInputCommandInteraction
   else if (subcommand === 'status') {
     const submission = await Submission.findOne({ teamId: team._id }).populate('hackathonId');
     if (!submission) {
-      await interaction.reply({ content: 'No submission found for your team.', ephemeral: true });
+      await interaction.reply({ content: 'No submission found for your team.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -690,12 +691,12 @@ async function handleSubmissionCommands(interaction: ChatInputCommandInteraction
         { name: 'Solution Overview', value: submission.solution.substring(0, 500) }
       );
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   } 
   else if (subcommand === 'history') {
     const submission = await Submission.findOne({ teamId: team._id });
     if (!submission) {
-      await interaction.reply({ content: 'No submission found.', ephemeral: true });
+      await interaction.reply({ content: 'No submission found.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -711,7 +712,7 @@ async function handleSubmissionCommands(interaction: ChatInputCommandInteraction
       });
     });
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -724,11 +725,11 @@ async function handleAnnouncement(interaction: ChatInputCommandInteraction): Pro
   // Verify Admin role
   const isAdmin = await userService.hasRole(actorId, ['super_admin', 'event_admin']);
   if (!isAdmin) {
-    await interaction.reply({ content: 'You must be a Super Admin or Event Admin to construct announcements.', ephemeral: true });
+    await interaction.reply({ content: 'You must be a Super Admin or Event Admin to construct announcements.', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   const hackathonId = interaction.options.getString('hackathon_id', true);
   const title = interaction.options.getString('title', true);
@@ -783,17 +784,17 @@ async function handleIndexCommands(interaction: ChatInputCommandInteraction): Pr
       )
       .setFooter({ text: 'All file processing converts documents to markdown sections and updates vectors automatically.' });
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   } 
   else if (subcommand === 'channel') {
     // Requires Admin access
     const isAdmin = await userService.hasRole(actorId, ['super_admin', 'event_admin']);
     if (!isAdmin) {
-      await interaction.reply({ content: 'Only Event Admins and Super Admins can index channel histories.', ephemeral: true });
+      await interaction.reply({ content: 'Only Event Admins and Super Admins can index channel histories.', flags: MessageFlags.Ephemeral });
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const channelInput = interaction.options.getChannel('channel', true);
 
@@ -846,7 +847,7 @@ async function handleIndexCommands(interaction: ChatInputCommandInteraction): Pr
     }
   } 
   else if (subcommand === 'reindex') {
-    await interaction.reply({ content: 'Run `npm run kb:ingest` on the server to sync the curated knowledge base. It re-embeds only documents that changed. Uploaded files are re-indexed by uploading them again.', ephemeral: true });
+    await interaction.reply({ content: 'Run `npm run kb:ingest` on the server to sync the curated knowledge base. It re-embeds only documents that changed. Uploaded files are re-indexed by uploading them again.', flags: MessageFlags.Ephemeral });
   }
 }
 
@@ -860,14 +861,14 @@ async function handleJudgeCommands(interaction: ChatInputCommandInteraction): Pr
   // Validate Judge / Admin Role
   const isJudge = await userService.hasRole(actorId, ['super_admin', 'track_admin', 'judge']);
   if (!isJudge) {
-    await interaction.reply({ content: 'Only assigned judges and track admins can access the judging panel.', ephemeral: true });
+    await interaction.reply({ content: 'Only assigned judges and track admins can access the judging panel.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   if (subcommand === 'dashboard') {
     const submissions = await judgeService.getAssignedSubmissions(actorId);
     if (submissions.length === 0) {
-      await interaction.reply({ content: 'There are no submissions currently assigned to your tracks.', ephemeral: true });
+      await interaction.reply({ content: 'There are no submissions currently assigned to your tracks.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -884,12 +885,12 @@ async function handleJudgeCommands(interaction: ChatInputCommandInteraction): Pr
       });
     });
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   } 
   else if (subcommand === 'review') {
     const subId = interaction.options.getString('submission_id', true);
     if (!Types.ObjectId.isValid(subId)) {
-      await interaction.reply({ content: 'Invalid submission ID.', ephemeral: true });
+      await interaction.reply({ content: 'Invalid submission ID.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -903,7 +904,7 @@ async function handleJudgeCommands(interaction: ChatInputCommandInteraction): Pr
     const impact = interaction.options.getInteger('impact', true);
     const comment = interaction.options.getString('comment') || undefined;
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
       // Evaluate and score
@@ -953,11 +954,11 @@ async function handleAdminCommands(interaction: ChatInputCommandInteraction): Pr
 
   if (subcommand === 'analytics') {
     if (!isEvent) {
-      await interaction.reply({ content: 'Only event admins can view high-level analytics.', ephemeral: true });
+      await interaction.reply({ content: 'Only event admins can view high-level analytics.', flags: MessageFlags.Ephemeral });
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
       // Aggregate stats
@@ -992,7 +993,7 @@ async function handleAdminCommands(interaction: ChatInputCommandInteraction): Pr
   } 
   else if (subcommand === 'settings') {
     if (!isSuper) {
-      await interaction.reply({ content: 'Only Super Admins can adjust global settings/statuses.', ephemeral: true });
+      await interaction.reply({ content: 'Only Super Admins can adjust global settings/statuses.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -1000,7 +1001,7 @@ async function handleAdminCommands(interaction: ChatInputCommandInteraction): Pr
     const status = interaction.options.getString('status', true);
 
     if (!Types.ObjectId.isValid(hackathonId)) {
-      await interaction.reply({ content: 'Invalid hackathon ID format.', ephemeral: true });
+      await interaction.reply({ content: 'Invalid hackathon ID format.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -1008,12 +1009,12 @@ async function handleAdminCommands(interaction: ChatInputCommandInteraction): Pr
       await hackathonService.updateHackathonStatus(actorId, hackathonId, status as any);
       await interaction.reply({ content: `Status of hackathon \`${hackathonId}\` has been set to **${status}**.` });
     } catch (err: any) {
-      await interaction.reply({ content: `Settings update failed: ${userMessage(err)}`, ephemeral: true });
+      await interaction.reply({ content: `Settings update failed: ${userMessage(err)}`, flags: MessageFlags.Ephemeral });
     }
   } 
   else if (subcommand === 'roles') {
     if (!isSuper) {
-      await interaction.reply({ content: 'Only Super Admins can adjust user permissions/roles.', ephemeral: true });
+      await interaction.reply({ content: 'Only Super Admins can adjust user permissions/roles.', flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -1033,7 +1034,7 @@ async function handleAdminCommands(interaction: ChatInputCommandInteraction): Pr
         await interaction.reply({ content: `Successfully revoked **${role.toUpperCase()}** permission from <@${targetUser.id}>.` });
       }
     } catch (err: any) {
-      await interaction.reply({ content: `Role assignment failed: ${userMessage(err)}`, ephemeral: true });
+      await interaction.reply({ content: `Role assignment failed: ${userMessage(err)}`, flags: MessageFlags.Ephemeral });
     }
   }
 }

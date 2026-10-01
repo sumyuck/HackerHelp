@@ -1,6 +1,6 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction,
-  EmbedBuilder, GuildMember, Message
+  EmbedBuilder, GuildMember, Message, MessageFlags
 } from 'discord.js';
 import { logger } from '../logger';
 import { ITicketDocument } from '../database/ticket.models';
@@ -119,22 +119,22 @@ export async function handleTicketButton(interaction: ButtonInteraction): Promis
   const [, kind, pendingId] = interaction.customId.split(':');
   const pending = await getPendingRequest(pendingId);
   if (!pending) {
-    await interaction.reply({ content: 'This button has expired. Run `/ticket open` to start a new ticket.', ephemeral: true });
+    await interaction.reply({ content: 'This button has expired. Run `/ticket open` to start a new ticket.', flags: MessageFlags.Ephemeral });
     return;
   }
   if (pending.userId !== interaction.user.id) {
-    await interaction.reply({ content: 'Only the person who asked can use these buttons. Use `/ask` or `/ticket open` for your own question.', ephemeral: true });
+    await interaction.reply({ content: 'Only the person who asked can use these buttons. Use `/ask` or `/ticket open` for your own question.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   if (kind === 'solved' || kind === 'reused') {
     await recordEvent({ guildId: pending.guildId, type: kind === 'solved' ? 'answer_marked_helpful' : 'resolution_reused', userId: pending.userId });
     await interaction.update({ components: [] });
-    await interaction.followUp({ content: 'Glad that helped! 🎉', ephemeral: true });
+    await interaction.followUp({ content: 'Glad that helped! 🎉', flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   const { reply, ticketExists } = await runOpenTicket({
     // Same key for every press of this message's buttons: double clicks and retries reuse one ticket.
     sourceKey: pending._id,
@@ -157,22 +157,24 @@ export async function handleTicketButton(interaction: ButtonInteraction): Promis
 
 async function resolveTicketRef(interaction: ChatInputCommandInteraction): Promise<ITicketDocument | null> {
   const number = interaction.options.getInteger('number');
-  const inForumThread = interaction.channel?.isThread() && interaction.channel.parentId === ticketForumId();
-  return findTicket(interaction.guildId!, { number, threadId: !number && inForumThread ? interaction.channelId : null });
+  if (number) return findTicket(interaction.guildId!, { number });
+  // Look up by channel ID rather than inspecting interaction.channel: that reads the gateway
+  // cache, which has no entry for archived threads or threads created before a restart.
+  return findTicket(interaction.guildId!, { threadId: interaction.channelId });
 }
 
 export async function handleTicketCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   if (!interaction.guildId) {
-    await interaction.reply({ content: 'Tickets are only available inside the server.', ephemeral: true });
+    await interaction.reply({ content: 'Tickets are only available inside the server.', flags: MessageFlags.Ephemeral });
     return;
   }
   if (!ticketsEnabled()) {
-    await interaction.reply({ content: 'Tickets are not configured on this server yet.', ephemeral: true });
+    await interaction.reply({ content: 'Tickets are not configured on this server yet.', flags: MessageFlags.Ephemeral });
     return;
   }
 
   const subcommand = interaction.options.getSubcommand();
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (subcommand === 'open') {
     const issue = interaction.options.getString('issue', true);
@@ -206,8 +208,8 @@ export async function handleTicketCommand(interaction: ChatInputCommandInteracti
   }
 
   if (subcommand === 'status') {
-    const number = interaction.options.getInteger('number');
-    if (!number && !(interaction.channel?.isThread() && interaction.channel.parentId === ticketForumId())) {
+    const ticket = await resolveTicketRef(interaction);
+    if (!ticket && !interaction.options.getInteger('number')) {
       const tickets = await listOpenTicketsFor(interaction.guildId, interaction.user.id);
       await interaction.editReply({
         content: tickets.length
@@ -216,7 +218,6 @@ export async function handleTicketCommand(interaction: ChatInputCommandInteracti
       });
       return;
     }
-    const ticket = await resolveTicketRef(interaction);
     await interaction.editReply(ticket ? { embeds: [buildTicketEmbed(ticket)] } : { content: 'Ticket not found.' });
     return;
   }
@@ -250,7 +251,11 @@ export async function handleTicketCommand(interaction: ChatInputCommandInteracti
 
 /** When the participant replies in a ticket that was waiting on them, hand it back to the assignee. */
 export async function handleTicketThreadMessage(message: Message): Promise<void> {
-  if (!message.guildId || !message.channel.isThread() || message.channel.parentId !== ticketForumId()) return;
+  if (!message.guildId) return;
+  // Cheap filter first: a cached thread outside the ticket forum is never a ticket. An uncached
+  // channel (thread from before a restart) falls through to the indexed threadId lookup.
+  const channel = message.channel;
+  if (channel.isThread() ? channel.parentId !== ticketForumId() : !channel.partial) return;
   const ticket = await findTicket(message.guildId, { threadId: message.channelId });
   if (!ticket || ticket.status !== 'waiting_user' || ticket.creatorId !== message.author.id) return;
   const result = await applyTicketAction(ticket, 'user_replied', { id: message.author.id, isModerator: false }, forumTicketChannel);

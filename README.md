@@ -8,6 +8,24 @@ The bot also includes hackathon operations workflows: registration, teams, submi
 
 > HackerHelp is an independent project. It is not affiliated with or endorsed by HackerRank, and its knowledge base is an unofficial summary of public sources.
 
+## In action
+
+**A grounded answer with its source.** The citation links to the document the answer came from. The buttons record whether it helped, or hand off to a human.
+
+<img src="docs/screenshots/answer-cited.png" alt="/ask returns a cited answer with source link and follow-up buttons" width="720">
+
+**Sensitive questions go to a human.** Prize-payment status is account-specific, so a deterministic rule escalates it before any model call.
+
+<img src="docs/screenshots/escalation.png" alt="A prize-payment question is escalated with an Open a ticket button" width="720">
+
+**The ticket moderators receive.** It's a post in `#hacker-help-desk`, tagged by category and status, pinging the moderator role. It shows a neutral summary, why the bot escalated, and what it already found in the docs.
+
+<img src="docs/screenshots/ticket-forum.png" alt="Forum ticket post with tags, moderator ping, summary, escalation reason and retrieved context" width="720">
+
+**No duplicate tickets.** The same problem in different words is matched by its canonical issue and pointed back to the existing ticket.
+
+<img src="docs/screenshots/duplicate.png" alt="A reworded request is matched to the participant's existing open ticket" width="720">
+
 ## How a question is answered
 
 ```text

@@ -94,10 +94,22 @@ const SENSITIVE_RULES: SensitiveRule[] = [
   }
 ];
 
+/**
+ * Folds typographic variants to ASCII before matching. Discord clients (especially
+ * mobile) often send curly apostrophes, and "haven’t" must hit the same gate as "haven't".
+ */
+export function normalizeForRules(message: string): string {
+  return message
+    .normalize('NFKC')
+    .replace(/[‘’‚‛ʼ`´]/g, "'")
+    .replace(/[“”„‟]/g, '"');
+}
+
 /** Rule order is priority order: the first matching rule wins. */
 export function detectSensitiveCategory(message: string): SensitiveMatch | null {
+  const text = normalizeForRules(message);
   for (const rule of SENSITIVE_RULES) {
-    if (rule.patterns.some(pattern => pattern.test(message))) {
+    if (rule.patterns.some(pattern => pattern.test(text))) {
       const { category, priority, reason } = rule;
       return { category, priority, reason };
     }
@@ -116,5 +128,6 @@ const INJECTION_PATTERNS: RegExp[] = [
 
 /** Catches obvious instruction-override attempts. Subtler ones are handled by the system prompt treating input as data. */
 export function detectPromptInjection(message: string): boolean {
-  return INJECTION_PATTERNS.some(pattern => pattern.test(message));
+  const text = normalizeForRules(message);
+  return INJECTION_PATTERNS.some(pattern => pattern.test(text));
 }
