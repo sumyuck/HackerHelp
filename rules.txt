@@ -1,0 +1,18 @@
+# HackerHelp Global AI Hackathon Rules & Guidelines
+
+## Team Size Requirements
+All teams must have a minimum of 3 members and a maximum of 5 members. Teams with fewer than 3 members at the time of submission will be disqualified.
+
+## Submissions
+Projects must be submitted before the official submission deadline. The submission must include:
+- A GitHub repository link containing the code.
+- A 3-minute video presentation/demo link.
+- Documentation detailing the project name, problem statement, solution description, and tech stack.
+
+## Rubrics & Scoring
+Submissions will be scored on a scale of 1 to 10 by a panel of judges across the following criteria:
+1. Innovation & Originality
+2. Technical Complexity & Implementation
+3. Scalability
+4. UI/UX & Presentation
+5. Business Value & Impact
