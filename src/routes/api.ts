@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { getAnalyticsMetrics } from '../controllers/analytics.controller';
 import { uploadDocument } from '../controllers/document.controller';
+import { requireAdminToken } from '../middleware/admin-auth';
 
 const router = Router();
 const upload = multer({
@@ -10,6 +11,9 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024 // Limit file uploads to 10MB
   }
 });
+
+// Every API route is operator-only.
+router.use(requireAdminToken);
 
 // Analytics Dashboard Endpoint
 router.get('/analytics', getAnalyticsMetrics);

@@ -1,31 +1,23 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { getOpenAIClient, getOpenAIModel } from './openai.service';
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
-import winston from 'winston';
+import { logger } from '../logger';
 import { generateEmbedding } from './embedding.service';
 
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
+let supabaseClient: SupabaseClient | undefined;
 
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-if (!supabaseUrl || !supabaseServiceKey) {
-  throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured in .env.');
-}
-
-export const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: {
-    persistSession: false
+/** Created on first use so importing this module never throws; startup config validation reports missing keys. */
+export function getSupabase(): SupabaseClient {
+  if (!supabaseClient) {
+    const url = process.env.SUPABASE_URL?.trim();
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+    if (!url || !serviceKey) {
+      throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured in .env.');
+    }
+    supabaseClient = createClient(url, serviceKey, { auth: { persistSession: false } });
   }
-});
+  return supabaseClient;
+}
 
 function chunkMarkdown(content: string, maxSectionLength = 2000): string[] {
   const lines = content.split('\n');
@@ -65,7 +57,7 @@ export async function uploadToDocMindStorage(
 
     logger.info(`Uploading file to HackerHelp document storage: ${storagePath} (${contentType})`);
 
-    const { data: uploadData, error: uploadError } = await supabase.storage
+    const { data: uploadData, error: uploadError } = await getSupabase().storage
       .from('files')
       .upload(storagePath, content, {
         contentType,
@@ -85,7 +77,7 @@ export async function uploadToDocMindStorage(
     // Existing installations can retain their document creator; new ones may configure it.
     let ownerId = process.env.SUPABASE_DOCUMENT_OWNER_ID?.trim();
     if (!ownerId) {
-      const { data: docs, error } = await supabase
+      const { data: docs, error } = await getSupabase()
         .from('documents')
         .select('created_by')
         .limit(1);
@@ -95,7 +87,7 @@ export async function uploadToDocMindStorage(
 
     // Insert into documents table
     logger.info('Inserting document record...');
-    const { data: docRecord, error: docRecordError } = await supabase
+    const { data: docRecord, error: docRecordError } = await getSupabase()
       .from('documents')
       .insert({
         name: filename,
@@ -127,7 +119,7 @@ export async function uploadToDocMindStorage(
     }
 
     logger.info('Inserting document sections into database...');
-    const { error: sectionsError } = await supabase
+    const { error: sectionsError } = await getSupabase()
       .from('document_sections')
       .insert(sectionsToInsert);
 
@@ -166,7 +158,7 @@ export async function askDocMindRAG(
     const embeddingArray = await generateEmbedding(lastUserMessage.content);
 
     logger.info('Querying match_document_sections RPC...');
-    const { data: documents, error: matchError } = await supabase
+    const { data: documents, error: matchError } = await getSupabase()
       .rpc('match_document_sections', {
         embedding: embeddingArray,
         match_threshold: 0.3
@@ -225,7 +217,7 @@ ${injectedDocs}
 export async function deleteDocMindDocument(storageObjectPath: string): Promise<void> {
   try {
     logger.info(`Deleting document from storage: ${storageObjectPath}`);
-    const { error } = await supabase.storage
+    const { error } = await getSupabase().storage
       .from('files')
       .remove([storageObjectPath]);
 

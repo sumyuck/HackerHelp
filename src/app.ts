@@ -1,16 +1,16 @@
 import express from 'express';
 import helmet from 'helmet';
-import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import mongoose from 'mongoose';
 import apiRouter from './routes/api';
+import { client } from './discord/bot';
 
 const app = express();
 
-// Security Middlewares
+// Security Middlewares. No CORS: the API is server-to-server only, never called from a browser.
 app.use(helmet());
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
 // Rate Limiting
 const limiter = rateLimit({
@@ -20,14 +20,23 @@ const limiter = rateLimit({
   legacyHeaders: false,
   message: 'Too many requests from this IP, please try again later.'
 });
-app.use(limiter);
 
 // API Router Mount
-app.use('/api', apiRouter);
+app.use('/api', limiter, apiRouter);
 
-// Health Check
+// Liveness: the process is up and serving HTTP.
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date() });
+});
+
+// Readiness: dependencies are connected, so the bot can actually do work.
+app.get('/ready', (req, res) => {
+  const checks = {
+    mongodb: mongoose.connection.readyState === 1,
+    discord: client.isReady()
+  };
+  const ready = Object.values(checks).every(Boolean);
+  res.status(ready ? 200 : 503).json({ status: ready ? 'READY' : 'NOT_READY', checks });
 });
 
 export default app;

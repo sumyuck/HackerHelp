@@ -2,19 +2,7 @@ import { Types } from 'mongoose';
 import { JudgeEvaluation, Submission, Team, Track, IRubricScores } from '../database/models';
 import { logAction } from './user.service';
 import { askDocMindRAG } from './docmind.service';
-import winston from 'winston';
-
-const logger = winston.createLogger({
-  level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
-  transports: [
-    new winston.transports.Console()
-  ]
-});
-
+import { logger } from '../logger';
 
 /**
  * Submits score and feedback for a project.

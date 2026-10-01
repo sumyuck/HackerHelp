@@ -2,7 +2,8 @@ services:
   app:
     build: .
     ports:
-      - '${PORT:-3000}:${PORT:-3000}'
+      # Loopback only: the admin API is not meant to be reachable from other machines.
+      - '127.0.0.1:${PORT:-3000}:${PORT:-3000}'
     env_file:
       - .env
     environment:
@@ -10,6 +11,15 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      # The slim image has no curl; Node's built-in fetch probes the readiness endpoint.
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:' + (process.env.PORT || 3000) + '/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
 
   mongodb:
     image: mongo:8
@@ -17,6 +27,7 @@ services:
       - '127.0.0.1:27017:27017'
     volumes:
       - mongo-data:/data/db
+    restart: unless-stopped
     healthcheck:
       test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.adminCommand({ ping: 1 })']
       interval: 10s

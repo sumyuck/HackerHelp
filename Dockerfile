@@ -13,4 +13,5 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 USER node
 EXPOSE 3000
-CMD ["npm", "start"]
+# Run node directly (not via npm) so SIGTERM reaches the process for graceful shutdown.
+CMD ["node", "dist/index.js"]
