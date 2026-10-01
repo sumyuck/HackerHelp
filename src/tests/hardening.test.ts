@@ -25,6 +25,10 @@ function testConfigValidation() {
   assert.deepEqual(validateStartupConfig({ ...validEnv, SUPER_ADMIN_IDS: '123456789012345678,987654321098765432' }), []);
   assert.match(validateStartupConfig({ ...validEnv, ADMIN_API_TOKEN: 'short' }).join(), /at least 32/);
   assert.match(validateStartupConfig({ ...validEnv, PORT: 'abc' }).join(), /PORT/);
+  assert.match(validateStartupConfig({ ...validEnv, RAG_ANSWER_MIN_SIMILARITY: '4' }).join(), /between 0 and 1/);
+  assert.match(validateStartupConfig({ ...validEnv, RAG_RETRIEVAL_FLOOR: 'high' }).join(), /between 0 and 1/);
+  assert.match(validateStartupConfig({ ...validEnv, RAG_TOP_K: '50' }).join(), /RAG_TOP_K/);
+  assert.deepEqual(validateStartupConfig({ ...validEnv, RAG_ANSWER_MIN_SIMILARITY: '0.45', RAG_TOP_K: '8' }), []);
 }
 
 function callMiddleware(authorization?: string) {

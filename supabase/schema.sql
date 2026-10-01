@@ -1,5 +1,5 @@
 -- Run in the SQL editor of a NEW Supabase project.
--- Existing installations: back up their schema/data and follow the README migration notes.
+-- Then run each file in supabase/migrations/ in order.
 create extension if not exists vector with schema extensions;
 
 create table public.documents (

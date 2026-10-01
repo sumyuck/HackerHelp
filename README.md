@@ -2,59 +2,62 @@
 
 **Discord-native AI support and hackathon operations bot.**
 
-HackerHelp is a Discord-native AI support and hackathon operations bot that automates community support, FAQ resolution, participant workflows, team management, submissions, judging, announcements, and role-based administration.
+HackerHelp answers participant questions in a hackathon Discord server from a curated, cited knowledge base, and hands off to humans when it shouldn't answer. The knowledge base targets [HackerRank Orchestrate](https://www.hackerrank.com/hackerrank-orchestrate-october26), a monthly 24-hour AI agent hackathon whose Discord gets the same questions every edition (dates, prizes, submission format, the AI judge interview), answered by hand by the organizers.
 
-## What it does
+The bot also includes hackathon operations workflows: registration, teams, submissions, judging, announcements, and role-based administration.
 
-- AI-powered documentation Q&A through `/ask` and bot mentions, with grounded responses restricted to retrieved community and hackathon documentation.
-- Retrieval-Augmented Generation (RAG) over FAQs, rules, and event documentation, including PDF, DOCX, Markdown, text, and Discord channel history ingestion.
-- Participant registration and profiles.
-- Team creation, invites, membership, and leadership controls.
-- Project submissions and submission version history.
-- Judge assignments, rubric scoring, evaluation reports, and AI-assisted project summaries.
-- AI-assisted announcement composition.
-- Role-based administration, audit logging, and Discord slash commands.
-- Existing aggregate metrics through `/admin analytics` and the Express API.
+> HackerHelp is an independent project. It is not affiliated with or endorsed by HackerRank, and its knowledge base is an unofficial summary of public sources.
 
-Planned additions: semantic ticket deduplication, confidence scoring, automated ticket escalation, an analytics dashboard UI, Redis queues, and support for large-scale production usage. These features are not implemented in this initial migration. HackerRank-specific support workflows are also outside this release.
+## How a question is answered
 
+```text
+Discord /ask or @mention
+  │
+  ├─ 1. Input bounds ─────────────── empty or > 1500 chars → ask to rephrase
+  ├─ 2. Prompt-injection gate ────── "ignore previous instructions…" → refuse (no API calls)
+  ├─ 3. Sensitive-case gate ──────── prize payment, account compromise, appeals, score disputes,
+  │                                  conduct reports, data requests → always escalate to a human
+  ├─ 4. Retrieval ─────────────────── OpenAI embedding → Supabase pgvector (top 6, floor 0.25)
+  ├─ 5. Model decision ────────────── JSON-schema output: answer | clarify | escalate | out_of_scope
+  │                                  + cited section IDs + one-line justification
+  └─ 6. Validation ────────────────── an answer must cite a section that was actually retrieved and
+                                     scores ≥ 0.30, otherwise it is downgraded to an escalation
+```
+
+The model proposes and code decides. The model never sees a gated message, so it cannot answer a prize-payment question or be talked out of an escalation. Every answer shows its sources, and every decision is logged with its reason, best similarity, and latency.
+
+Thresholds come from measured data, not guesses: see [eval/RESULTS.md](eval/RESULTS.md). Retrieval found the right document for 24/24 answerable questions, and off-topic questions retrieved nothing above the floor.
+
+## Features
+
+- **Grounded Q&A**: `/ask` and @mentions, with source links, verification labels for older or community-compiled facts, and a clear handoff when the bot won't answer.
+- **Curated knowledge base**: Markdown in [knowledge/](knowledge/) with front matter (source URL, verification level). `npm run kb:ingest` is idempotent: content hashes skip unchanged files, and each document is replaced atomically in one Postgres transaction.
+- **Evaluation harness**: `npm run eval:rag` runs 41 labelled cases covering paraphrases, Hinglish, sensitive requests, vague and off-topic messages, and prompt injection.
+- **Bounded retries**: OpenAI calls retry transient failures with capped, jittered backoff, and fail fast on quota exhaustion or long `Retry-After` instead of hanging Discord interactions ([src/services/retry.ts](src/services/retry.ts)).
+- **Additional sources**: admin upload of PDF, DOCX, Markdown, and text files, and indexing of a channel's recent history. Re-indexing replaces the previous version.
+- **Hackathon operations**: registration and profiles, teams (invites, leadership transfer), submissions with version history, judge rubric scoring and AI-assisted summaries, an announcement composer, roles, and audit logging.
+- **Operations**: startup config validation, liveness and readiness probes, graceful shutdown, a token-protected admin API, and structured JSON logs.
 ## Architecture
 
 ```text
-Discord
-   |
-Discord.js Bot
-   |
-Node.js / TypeScript Services
-   |----------------------|
-MongoDB                RAG Service
-                           |
-                     OpenAI Embeddings
-                           |
-                     Supabase pgvector
-                           |
-                      OpenAI Model
-                           |
-                      Discord Reply
+Discord ──► Discord.js bot ──► answer pipeline ──► OpenAI (embeddings, chat)
+                │                     │
+                │                     └──────────► Supabase Postgres + pgvector
+                │                                  (documents, sections, upsert/match RPCs)
+                └──► hackathon services ─────────► MongoDB (users, teams, submissions,
+                                                    judging, audit log)
+Express: /health, /ready, /api/* (bearer token)
 ```
 
-MongoDB stores participants, events, teams, submissions, judging data, and audit logs. Supabase stores source documents and vectorized document sections. Both document ingestion and question retrieval use the same OpenAI embedding model. Retrieved sections supply the chat model's factual context. When no sections match, HackerHelp returns an explicit “couldn't find” response without calling the chat model; its system prompt also requires that response when retrieved sections do not answer the question.
+See [explanation.md](explanation.md) for the code layout and data flow.
 
-See [the architecture guide](explanation.md) for the code layout and workflow details.
+## Tech stack
 
-## Tech Stack
+TypeScript on Node.js 24, Discord.js 14, OpenAI Node SDK, Supabase (Postgres, pgvector, Storage), MongoDB with Mongoose, Express, Docker Compose, GitHub Actions.
 
-- TypeScript and Node.js 22+ (Node.js 24 recommended; see `.nvmrc`)
-- Express
-- Discord.js
-- OpenAI API through the official Node.js SDK
-- MongoDB / Mongoose
-- Supabase Storage and PostgreSQL / pgvector
-- Docker and Docker Compose
+## Setup
 
-## Local Setup
-
-### 1. Install and configure
+### 1. Configure
 
 ```bash
 git clone https://github.com/sumyuck/HackerHelp.git
@@ -63,100 +66,61 @@ npm install
 cp .env.example .env
 ```
 
-Fill in `.env` with your own credentials. Real `.env` files are ignored by Git and excluded from Docker builds.
-
 | Variable | Purpose |
 | --- | --- |
 | `DISCORD_TOKEN` | Discord bot token |
-| `DISCORD_CLIENT_ID` | Discord application's client ID |
-| `DISCORD_GUILD_ID` | Development server ID for immediate guild command registration; omit for global registration |
-| `OPENAI_API_KEY` | Server-side OpenAI API key |
-| `OPENAI_CHAT_MODEL` | Chat Completions compatible model available to your project; example: `gpt-4.1-mini` |
-| `OPENAI_EMBEDDING_MODEL` | Embedding model; example: `text-embedding-3-small` |
-| `MONGODB_URI` | MongoDB connection string; local example included |
-| `SUPABASE_URL` | Your Supabase project's URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Server-side Supabase service role key |
-| `SUPABASE_DOCUMENT_OWNER_ID` | Optional existing Supabase Auth user UUID if your document schema requires a creator |
-| `SUPER_ADMIN_IDS` | Comma-separated Discord user IDs with administrator access |
-| `ADMIN_API_TOKEN` | Bearer token for the operator-only HTTP API (`/api/*`), at least 32 characters. If unset, the API is disabled (503). Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `LOG_LEVEL` | Optional winston log level; defaults to `info` |
-| `PORT` | HTTP port; defaults to `3000` |
+| `DISCORD_CLIENT_ID` | Discord application ID |
+| `DISCORD_GUILD_ID` | Development server ID for instant command registration; omit to register globally |
+| `OPENAI_API_KEY` | Server-side OpenAI API key (a project with billing enabled; the free tier allows 50 chat requests per day) |
+| `OPENAI_CHAT_MODEL` | Chat model with structured-output support, e.g. `gpt-4.1-mini` |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` (the schema uses 1536 dimensions) |
+| `MONGODB_URI` | MongoDB connection string (`MONGO_URI` accepted as a legacy fallback) |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role or secret key (server-side only) |
+| `SUPER_ADMIN_IDS` | Comma-separated Discord user IDs with full admin rights |
+| `ADMIN_API_TOKEN` | Bearer token (32+ chars) for `/api/*`; the API is disabled if unset. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `RAG_RETRIEVAL_FLOOR`, `RAG_ANSWER_MIN_SIMILARITY`, `RAG_TOP_K` | Optional retrieval tuning; defaults 0.25 / 0.30 / 6 |
+| `LOG_LEVEL`, `PORT` | Optional; defaults `info` and `3000` |
 
-OpenAI models must be configured explicitly; the sample values in `.env.example` are starting points. The included vector schema expects **1536 dimensions**, matching `text-embedding-3-small`. If you change embedding models, adjust the schema to that model's output dimensions and re-index all documents. API calls require an OpenAI API project with access and billing configured. [OpenAI embedding documentation](https://developers.openai.com/api/docs/guides/embeddings).
+Startup validates this configuration and exits with a list of every missing or malformed value.
 
-`MONGO_URI` remains supported as a legacy fallback so existing database configurations continue to work. `MONGODB_URI` takes precedence. Set it to your existing database URI to retain existing participant and event data.
+### 2. Supabase
 
-### 2. Prepare MongoDB and Supabase
+In a new Supabase project's SQL editor, run [supabase/schema.sql](supabase/schema.sql), then each file in [supabase/migrations/](supabase/migrations/) in order. Database functions are executable only by the service role.
 
-Run MongoDB locally, use a managed MongoDB instance, or start the included container:
+If you change the embedding model, update the vector dimensions in the schema and re-run `npm run kb:ingest`. The content hash includes the model name, so every document is re-embedded.
 
-```bash
-docker compose up -d mongodb
-```
+### 3. Discord
 
-For a **new Supabase project**, run [supabase/schema.sql](supabase/schema.sql) in its SQL editor. This creates the private `files` storage bucket, `documents` and `document_sections` tables, and the `match_document_sections` RPC. Database access is restricted to the server-side service role.
+In the Developer Portal, enable **Message Content Intent**. Invite the bot with the `bot` and `applications.commands` scopes and permission to view channels, send messages, embed links, and read message history.
 
-For an **existing Supabase installation**, back up its schema and documents first. Retain the `files` bucket and document records, update `document_sections.embedding` and the matching RPC to the configured model's dimensions, and replace all previous vectors by re-indexing the source documents. Vectors produced by different models are incompatible even if their dimensions match. Do not run the fresh-project SQL over existing tables. If `documents.created_by` is required, set `SUPABASE_DOCUMENT_OWNER_ID` to a valid existing Auth user UUID; the uploader otherwise reuses an existing document creator when available.
-
-### 3. Configure Discord and commands
-
-In the Discord Developer Portal, enable the **Message Content Intent** for mention-based Q&A. Invite the bot with the `bot` and `applications.commands` scopes. Give it permissions to view channels, send messages, embed links, and read message history in channels you intend to index. Put your Discord user ID in `SUPER_ADMIN_IDS`.
+### 4. Run
 
 ```bash
-npm run register-commands
+docker compose up -d --build
+docker compose exec app node dist/discord/register-commands.js
+docker compose exec app node dist/scripts/ingest-knowledge.js
 ```
 
-Set the bot's display name to **HackerHelp** in the Developer Portal; repository branding cannot change an existing Discord application name.
+Compose runs the bot and MongoDB. It publishes ports on loopback only, health-checks the app via `/ready`, and restarts it on failure. Without Docker, use `npm run dev` (or `npm run build && npm start`), `npm run register-commands`, and `npm run kb:ingest`.
 
-### 4. Seed, build, and start
+`npm run seed` adds a sample event and tracks for the hackathon operations commands.
 
-Optionally create a sample event and tracks in an empty MongoDB database:
-
-```bash
-npm run seed
-```
-
-Seeding skips databases that already contain an event. Edit the sample event configuration in [src/database/seed.ts](src/database/seed.ts) before using it for a real event.
-
-```bash
-npm run build
-npm start
-```
-
-For development, use `npm run dev`. The bot and API run together. Startup validates required configuration and exits with a list of every missing or malformed variable. `GET /health` is a liveness probe (process up); `GET /ready` is a readiness probe that returns 503 until MongoDB and the Discord gateway are both connected. `SIGTERM`/`SIGINT` trigger a graceful shutdown (HTTP server, Discord gateway, then MongoDB) with a 10-second hard limit.
-
-### 5. Index documentation
-
-Edit [rules.txt](rules.txt) for your event. With the app running, upload it from a second terminal:
-
-```bash
-npm run upload-rules
-```
-
-The script authenticates with `ADMIN_API_TOKEN`. Operators can also upload `.pdf`, `.docx`, `.md`, or `.txt` files (up to 10 MB) through `POST /api/documents/upload` with an `Authorization: Bearer <ADMIN_API_TOKEN>` header and a multipart `file` field, or index channel history through `/index channel`. `/index reindex` currently reports indexing status; it does not regenerate embeddings. Re-upload source documents when rebuilding the vector index.
-
-Try `/auth`, `/register`, `/help`, and `/ask` in Discord, or mention the bot with a question about the indexed rules.
-
-## Commands and Scripts
+## Scripts
 
 | Script | Purpose |
 | --- | --- |
-| `npm run dev` | Run the TypeScript development server |
-| `npm run build` | Compile to `dist/` |
-| `npm start` | Run the compiled bot and API |
-| `npm run register-commands` | Register existing Discord slash commands |
-| `npm run seed` | Add sample hackathon data to an empty database |
-| `npm run upload-rules` | Upload and index `rules.txt` |
-| `npm test` | Run existing constraints checks and mocked OpenAI/Supabase RAG regression tests |
+| `npm run dev` / `build` / `start` | Develop, compile, run |
+| `npm run register-commands` | Register slash commands |
+| `npm run kb:ingest` | Sync `knowledge/` to Supabase (`-- --prune` deletes removed docs, `-- --dry-run` previews) |
+| `npm run eval:rag` | Evaluate the answer pipeline (`-- --retrieval-only` makes no chat calls) |
+| `npm run seed` | Sample hackathon data |
+| `npm test` | Unit tests: config, API auth, chunking, triage rules, answer pipeline, retry policy. Network calls are mocked. |
 
-The main command families are `/auth`, `/register`, `/profile`, `/help`, `/ask`, `/hackathon`, `/track`, `/team`, `/submission`, `/announcement`, `/index`, `/judge`, and `/admin`. Use `/help` for available workflows.
+Operators can also `POST /api/documents/upload` (multipart `file`, `Authorization: Bearer <ADMIN_API_TOKEN>`). Admins can run `/index channel` in Discord.
 
-## Docker
+## Known limitations
 
-After configuring `.env` and Supabase:
-
-```bash
-docker compose up --build
-```
-
-Compose runs the bot/API and MongoDB, publishes ports on loopback only, health-checks the app through `/ready`, restarts containers on failure, sets the app's MongoDB host to `mongodb`, and persists database data in a named volume. Supabase and OpenAI remain external services. Container builds use the checked-in lockfile and exclude local credentials.
+- The knowledge base is hand-curated from public pages and can lag behind HackerRank's official information. Facts from a previous edition are labelled as such in answers.
+- Non-English questions retrieve weaker evidence (see eval results). Query rewriting would help at the cost of an extra model call.
+- Indexed channel history is community content, not verified fact. It is labelled `community`, and indexing is admin-only.
