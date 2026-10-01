@@ -7,7 +7,7 @@ const validEnv = {
   DISCORD_TOKEN: 'token',
   DISCORD_CLIENT_ID: '123456789012345678',
   OPENAI_API_KEY: 'key',
-  OPENAI_CHAT_MODEL: 'chat',
+  ANTHROPIC_API_KEY: 'anthropic-key',
   OPENAI_EMBEDDING_MODEL: 'embed',
   SUPABASE_URL: 'https://example.supabase.co',
   SUPABASE_SERVICE_ROLE_KEY: 'service'
@@ -28,6 +28,7 @@ function testConfigValidation() {
   assert.match(validateStartupConfig({ ...validEnv, RAG_ANSWER_MIN_SIMILARITY: '4' }).join(), /between 0 and 1/);
   assert.match(validateStartupConfig({ ...validEnv, RAG_RETRIEVAL_FLOOR: 'high' }).join(), /between 0 and 1/);
   assert.match(validateStartupConfig({ ...validEnv, RAG_TOP_K: '50' }).join(), /RAG_TOP_K/);
+  assert.match(validateStartupConfig({ ...validEnv, TICKET_DUPLICATE_SIMILARITY: '80' }).join(), /TICKET_DUPLICATE_SIMILARITY/);
   assert.deepEqual(validateStartupConfig({ ...validEnv, RAG_ANSWER_MIN_SIMILARITY: '0.45', RAG_TOP_K: '8' }), []);
 }
 

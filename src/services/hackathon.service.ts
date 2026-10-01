@@ -1,4 +1,5 @@
 import { Types } from 'mongoose';
+import { UserFacingError } from '../errors';
 import { Hackathon, Track, Registration, IHackathon, ITrack, HackathonStatus } from '../database/models';
 import { logAction } from './user.service';
 
@@ -27,7 +28,7 @@ export async function deleteHackathon(
   const hId = new Types.ObjectId(hackathonId);
   const hackathon = await Hackathon.findById(hId);
   if (!hackathon) {
-    throw new Error('Hackathon not found.');
+    throw new UserFacingError('Hackathon not found.');
   }
 
   await Track.deleteMany({ hackathonId: hId });
@@ -45,7 +46,7 @@ export async function updateHackathonStatus(
 ): Promise<any> {
   const hackathon = await Hackathon.findById(new Types.ObjectId(hackathonId));
   if (!hackathon) {
-    throw new Error('Hackathon not found.');
+    throw new UserFacingError('Hackathon not found.');
   }
 
   hackathon.status = status;
@@ -74,17 +75,17 @@ export async function registerParticipant(
   const hId = new Types.ObjectId(hackathonId);
   const hackathon = await Hackathon.findById(hId);
   if (!hackathon) {
-    throw new Error('Hackathon not found.');
+    throw new UserFacingError('Hackathon not found.');
   }
 
   if (hackathon.status !== 'Registration Open') {
-    throw new Error(`Registration is currently closed. Current status: ${hackathon.status}`);
+    throw new UserFacingError(`Registration is currently closed. Current status: ${hackathon.status}`);
   }
 
   // Check if already registered
   const existing = await Registration.findOne({ userId: discordId, hackathonId: hId });
   if (existing) {
-    throw new Error('You are already registered for this hackathon!');
+    throw new UserFacingError('You are already registered for this hackathon!');
   }
 
   const registration = await Registration.create({
@@ -114,7 +115,7 @@ export async function createTrack(
 ): Promise<any> {
   const hackathon = await Hackathon.findById(new Types.ObjectId(hackathonId));
   if (!hackathon) {
-    throw new Error('Hackathon not found.');
+    throw new UserFacingError('Hackathon not found.');
   }
 
   const track = await Track.create({
@@ -137,7 +138,7 @@ export async function assignTrackStaff(
 ): Promise<any> {
   const track = await Track.findById(new Types.ObjectId(trackId));
   if (!track) {
-    throw new Error('Track not found.');
+    throw new UserFacingError('Track not found.');
   }
 
   // Add only unique IDs

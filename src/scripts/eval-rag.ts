@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { answerQuestion, AnswerResult } from '../services/answer.service';
 import { searchKnowledge } from '../services/knowledge.service';
+import { getChatModel } from '../services/llm.service';
 
 /**
  * Runs the labelled cases in eval/rag-cases.json through the real pipeline
@@ -130,7 +131,7 @@ async function main() {
   const outOfScope = results.filter(r => r.expected[0] === 'out_of_scope' && r.topSimilarity !== null).map(r => r.topSimilarity!);
 
   const summary = {
-    model: process.env.OPENAI_CHAT_MODEL,
+    model: getChatModel(),
     embeddingModel: process.env.OPENAI_EMBEDDING_MODEL,
     thresholds: {
       retrievalFloor: process.env.RAG_RETRIEVAL_FLOOR ?? '0.25 (default)',

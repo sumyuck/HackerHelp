@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 
 // Fake credentials; every request is intercepted below, so no live API is called.
 process.env.OPENAI_API_KEY = 'test-openai-key';
-process.env.OPENAI_CHAT_MODEL = 'test-chat-model';
+process.env.ANTHROPIC_API_KEY = 'test-anthropic-key';
+process.env.ANTHROPIC_MODEL = 'test-claude-model';
 process.env.OPENAI_EMBEDDING_MODEL = 'test-embedding-model';
 process.env.SUPABASE_URL = 'https://test.supabase.co';
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-supabase-key';
@@ -10,7 +11,7 @@ process.env.RAG_ANSWER_MIN_SIMILARITY = '0.3';
 process.env.LOG_LEVEL = 'error';
 
 const vector = Array.from({ length: 1536 }, (_, index) => (index === 0 ? 1 : 0));
-const requests: { path: string; body: any }[] = [];
+const requests: { path: string; body: any; headers: Headers }[] = [];
 
 type Handler = (path: string, body: any) => { status?: number; json: unknown } | undefined;
 let handler: Handler = () => undefined;
@@ -23,12 +24,13 @@ const section = (similarity: number, slug = 'orchestrate/faq') => ({
 
 let sections: unknown[] = [];
 let decision: Record<string, unknown> = {};
+let stopReason = 'end_turn';
 
 globalThis.fetch = async (input, init) => {
   const request = new Request(input, init);
   const path = new URL(request.url).pathname;
   const body = request.body ? await request.json() : undefined;
-  requests.push({ path, body });
+  requests.push({ path, body, headers: request.headers });
   const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
 
   const override = handler(path, body);
@@ -41,8 +43,14 @@ globalThis.fetch = async (input, init) => {
   }
   if (path === '/rest/v1/rpc/match_document_sections') return json(sections);
   if (path === '/rest/v1/rpc/upsert_document') return json('00000000-0000-4000-8000-000000000001');
-  if (path === '/v1/chat/completions') {
-    return json({ choices: [{ message: { role: 'assistant', content: JSON.stringify(decision) } }] });
+  if (path === '/v1/messages') {
+    return json({
+      id: 'msg_test', type: 'message', role: 'assistant', model: body.model,
+      content: stopReason === 'refusal' ? [] : [{ type: 'text', text: JSON.stringify(decision) }],
+      stop_reason: stopReason, stop_sequence: null,
+      stop_details: stopReason === 'refusal' ? { type: 'refusal', category: 'cyber', explanation: 'test' } : null,
+      usage: { input_tokens: 10, output_tokens: 10 }
+    });
   }
   throw new Error(`Unexpected network request in test: ${path}`);
 };
@@ -51,18 +59,19 @@ const answerDecision = (overrides: Record<string, unknown>) => ({
   decision: 'answer', answer: 'Orchestrate is solo.', clarifying_question: '', cited_section_ids: ['S1'], reason: 'FAQ states it.', ...overrides
 });
 
-const chatCalls = () => requests.filter(r => r.path === '/v1/chat/completions');
-const reset = () => { requests.length = 0; handler = () => undefined; };
+const chatCalls = () => requests.filter(r => r.path === '/v1/messages');
+const reset = () => { requests.length = 0; handler = () => undefined; stopReason = 'end_turn'; };
 
 async function run() {
-  const { answerQuestion, SYSTEM_PROMPT, samplingParams } = await import('../services/answer.service');
+  const { answerQuestion, SYSTEM_PROMPT } = await import('../services/answer.service');
+  const { modelOptions, DEFAULT_CHAT_MODEL } = await import('../services/llm.service');
+
+  // Haiku 4.5 rejects effort and is not a fallback model; newer models get both.
+  assert.equal(DEFAULT_CHAT_MODEL, 'claude-haiku-4-5');
+  assert.deepEqual(modelOptions('claude-haiku-4-5', 'low'), { output_config: {} });
+  assert.deepEqual(modelOptions('claude-opus-5-5', 'low'), { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default', output_config: { effort: 'low' } });
   const { generateEmbeddings } = await import('../services/embedding.service');
   const { indexDocument, documentContentHash } = await import('../services/knowledge.service');
-
-  // 0. Reasoning models reject temperature; others are pinned to 0.
-  assert.deepEqual(samplingParams('gpt-4.1-mini'), { temperature: 0, max_completion_tokens: 700 });
-  assert.ok(!('temperature' in samplingParams('gpt-5-mini')));
-  assert.ok(!('temperature' in samplingParams('o4-mini')));
 
   // 1. Grounded answer with a valid citation above the bar.
   reset();
@@ -74,15 +83,19 @@ async function run() {
   assert.deepEqual(result.citations.map(c => c.slug), ['orchestrate/faq', 'orchestrate/rules']);
   assert.equal(result.confidence, 0.62);
 
-  const chat = chatCalls()[0].body;
-  assert.equal(chat.model, 'test-chat-model');
-  assert.equal(chat.temperature, 0);
-  assert.equal(chat.response_format.type, 'json_schema');
-  assert.equal(chat.response_format.json_schema.strict, true);
-  assert.equal(chat.messages.length, 2);
-  assert.equal(chat.messages[0].content, SYSTEM_PROMPT);
-  assert.match(chat.messages[1].content, /<section id="S1" title="Title orchestrate\/faq" verification="official">/);
-  assert.match(chat.messages[1].content, /<message>\nIs Orchestrate solo or team-based\?\n<\/message>/);
+  const call = chatCalls()[0];
+  const chat = call.body;
+  assert.equal(chat.model, 'test-claude-model');
+  assert.equal(chat.system, SYSTEM_PROMPT);
+  assert.equal(chat.output_config.format.type, 'json_schema');
+  assert.deepEqual(chat.output_config.format.schema.required, ['decision', 'answer', 'clarifying_question', 'cited_section_ids', 'reason']);
+  assert.equal(chat.output_config.effort, 'low');
+  // Server-side refusal fallback is opted into on every request.
+  assert.equal(chat.fallbacks, 'default');
+  assert.match(call.headers.get('anthropic-beta') ?? '', /server-side-fallback-2026-07-01/);
+  assert.equal(chat.messages.length, 1);
+  assert.match(chat.messages[0].content, /<section id="S1" title="Title orchestrate\/faq" verification="official">/);
+  assert.match(chat.messages[0].content, /<message>\nIs Orchestrate solo or team-based\?\n<\/message>/);
   const retrieval = requests.find(r => r.path === '/rest/v1/rpc/match_document_sections')!.body;
   assert.deepEqual(retrieval.query_embedding, vector);
   assert.equal(retrieval.match_count, 6);
@@ -136,15 +149,31 @@ async function run() {
 
   // 7. Failures degrade safely and never leak provider details.
   reset();
-  handler = path => (path === '/v1/chat/completions' ? { status: 400, json: { error: { message: 'private provider detail' } } } : undefined);
+  handler = path => (path === '/v1/messages' ? { status: 400, json: { type: 'error', error: { type: 'invalid_request_error', message: 'private provider detail' } } } : undefined);
   sections = [section(0.6)];
   result = await answerQuestion('Is Orchestrate solo?');
   assert.equal(result.outcome, 'error');
   assert.ok(!result.message.includes('private provider detail'));
 
+  // Output that violates the schema is rejected, not trusted.
   reset();
-  handler = path => (path === '/v1/chat/completions' ? { json: { choices: [{ message: { content: '{"decision":"maybe"}' } }] } } : undefined);
+  decision = { decision: 'maybe', answer: '', clarifying_question: '', cited_section_ids: [], reason: '' };
   assert.equal((await answerQuestion('Is Orchestrate solo?')).outcome, 'error');
+
+  // A safety refusal (after server-side fallback) goes to a human rather than erroring.
+  reset();
+  stopReason = 'refusal';
+  result = await answerQuestion('Is Orchestrate solo?');
+  assert.equal(result.outcome, 'escalate');
+  assert.equal(result.reason, 'model_refusal:cyber');
+
+  // Anthropic 529 overloaded is transient: retried, then surfaced as a busy message.
+  reset();
+  handler = path => (path === '/v1/messages' ? { status: 529, json: { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } } } : undefined);
+  result = await answerQuestion('Is Orchestrate solo?');
+  assert.equal(result.outcome, 'error');
+  assert.equal(result.reason, 'upstream_unavailable:anthropic.messages');
+  assert.equal(chatCalls().length, 3);
 
   reset();
   handler = path => (path === '/rest/v1/rpc/match_document_sections' ? { status: 500, json: { message: 'db down' } } : undefined);
@@ -181,7 +210,7 @@ async function run() {
   assert.notEqual(documentContentHash(doc), before);
   assert.equal(documentContentHash({ ...doc, title: 'Test' }), documentContentHash(doc));
 
-  console.log('HackerHelp answer pipeline tests passed (mocked OpenAI and Supabase; no live API calls).');
+  console.log('HackerHelp answer pipeline tests passed (mocked Anthropic, OpenAI and Supabase; no live API calls).');
 }
 
 run().catch(error => {

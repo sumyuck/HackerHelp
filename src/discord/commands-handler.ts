@@ -16,10 +16,16 @@ import * as submissionService from '../services/submission.service';
 import * as judgeService from '../services/judge.service';
 import * as knowledgeService from '../services/knowledge.service';
 import { answerQuestion } from '../services/answer.service';
-import { composeText } from '../services/openai.service';
+import { generateText } from '../services/llm.service';
 import { buildAnswerEmbed } from './answer-presenter';
+import { handleTicketCommand, supportFollowUp } from './ticket-interactions';
 import { Hackathon, Track, Team, Registration, Submission, User, GlobalRole, JudgeEvaluation } from '../database/models';
 import { logger } from '../logger';
+import { UserFacingError } from '../errors';
+
+// Only messages written for users are shown; anything else may contain internals and is logged instead.
+const userMessage = (error: unknown) =>
+  error instanceof UserFacingError ? error.message : 'Something went wrong on our side. Please try again, or ask a moderator.';
 
 /**
  * Main entrance router for all slash command interactions.
@@ -46,6 +52,9 @@ export async function handleSlashCommandInteraction(interaction: ChatInputComman
         break;
       case 'ask':
         await handleAsk(interaction);
+        break;
+      case 'ticket':
+        await handleTicketCommand(interaction);
         break;
       case 'track':
         await handleTrackCommands(interaction);
@@ -79,7 +88,7 @@ export async function handleSlashCommandInteraction(interaction: ChatInputComman
     const errorEmbed = new EmbedBuilder()
       .setColor('#FF0055')
       .setTitle('Command Execution Error')
-      .setDescription(error.message || 'An unexpected error occurred while executing the command.');
+      .setDescription(userMessage(error));
     
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp({ embeds: [errorEmbed], ephemeral: true }).catch(() => {});
@@ -251,7 +260,7 @@ export async function handleRegisterModalSubmit(interaction: ModalSubmitInteract
 
     await interaction.editReply({ embeds: [successEmbed] });
   } catch (error: any) {
-    await interaction.editReply({ content: `Registration failed: ${error.message}` });
+    await interaction.editReply({ content: `Registration failed: ${userMessage(error)}` });
   }
 }
 
@@ -300,7 +309,7 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
     .setTitle('HackerHelp - Help Desk')
     .setDescription('List of available slash commands for organizing and participating in hackathons:')
     .addFields(
-      { name: 'Participant Commands', value: '`/auth` - Sync your account\n`/register` - Complete hackathon signup modal\n`/profile` - View your participant card\n`/ask` - Ask about Orchestrate (answers cite their sources)' },
+      { name: 'Participant Commands', value: '`/auth` - Sync your account\n`/register` - Complete hackathon signup modal\n`/profile` - View your participant card\n`/ask` - Ask about Orchestrate (answers cite their sources)\n`/ticket open` - Get help from the team\n`/ticket status` - Your open tickets' },
       { name: 'Team Commands', value: '`/team create [name] [track_id]` - Form a team\n`/team invite [@user]` - Send team invite\n`/team info` - View your team\n`/team leave` - Leave current team\n`/team delete` - Disband team (Leader)' },
       { name: 'Submission Commands', value: '`/submission create` - Submit project draft\n`/submission update` - Submit a new version\n`/submission status` - View submit logs\n`/submission history` - View past versions' },
       { name: 'Info Commands', value: '`/hackathon list` - List hackathons\n`/track list` - List tracks' },
@@ -318,7 +327,10 @@ async function handleAsk(interaction: ChatInputCommandInteraction): Promise<void
   const question = interaction.options.getString('question', true);
 
   const result = await answerQuestion(question);
-  await interaction.editReply({ embeds: [buildAnswerEmbed(result, question)] });
+  const components = await supportFollowUp(result, {
+    id: interaction.id, guildId: interaction.guildId, userId: interaction.user.id, userTag: interaction.user.tag, question
+  });
+  await interaction.editReply({ embeds: [buildAnswerEmbed(result, question)], components });
 }
 
 /**
@@ -739,7 +751,7 @@ Draft: ${draftContent}
 3. **Short/SMS/Notification Version**: 2-sentence summary.
   `;
 
-  const response = await composeText(
+  const response = await generateText(
     'You are an expert copywriter and communications officer. Format documents beautifully with markdown. Do not add facts (dates, prizes, links) that are not in the draft.',
     prompt
   );
@@ -923,7 +935,7 @@ async function handleJudgeCommands(interaction: ChatInputCommandInteraction): Pr
 
       await interaction.editReply({ embeds: [embed] });
     } catch (err: any) {
-      await interaction.editReply({ content: `Scoring failed: ${err.message}` });
+      await interaction.editReply({ content: `Scoring failed: ${userMessage(err)}` });
     }
   }
 }
@@ -975,7 +987,7 @@ async function handleAdminCommands(interaction: ChatInputCommandInteraction): Pr
 
       await interaction.editReply({ embeds: [embed] });
     } catch (err: any) {
-      await interaction.editReply({ content: `Failed to compile analytics: ${err.message}` });
+      await interaction.editReply({ content: `Failed to compile analytics: ${userMessage(err)}` });
     }
   } 
   else if (subcommand === 'settings') {
@@ -996,7 +1008,7 @@ async function handleAdminCommands(interaction: ChatInputCommandInteraction): Pr
       await hackathonService.updateHackathonStatus(actorId, hackathonId, status as any);
       await interaction.reply({ content: `Status of hackathon \`${hackathonId}\` has been set to **${status}**.` });
     } catch (err: any) {
-      await interaction.reply({ content: `Settings update failed: ${err.message}`, ephemeral: true });
+      await interaction.reply({ content: `Settings update failed: ${userMessage(err)}`, ephemeral: true });
     }
   } 
   else if (subcommand === 'roles') {
@@ -1021,7 +1033,7 @@ async function handleAdminCommands(interaction: ChatInputCommandInteraction): Pr
         await interaction.reply({ content: `Successfully revoked **${role.toUpperCase()}** permission from <@${targetUser.id}>.` });
       }
     } catch (err: any) {
-      await interaction.reply({ content: `Role assignment failed: ${err.message}`, ephemeral: true });
+      await interaction.reply({ content: `Role assignment failed: ${userMessage(err)}`, ephemeral: true });
     }
   }
 }

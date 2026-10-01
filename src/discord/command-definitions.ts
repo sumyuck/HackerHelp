@@ -1,6 +1,39 @@
 import { SlashCommandBuilder } from 'discord.js';
 
 export const commandsDefinitions = [
+  // /ticket
+  new SlashCommandBuilder()
+    .setName('ticket')
+    .setDescription('Support tickets handled by the moderators')
+    .addSubcommand(sub => sub
+      .setName('open')
+      .setDescription('Ask for help from the team (HackerHelp checks the docs first)')
+      .addStringOption(o => o.setName('issue').setDescription('Describe the problem. No personal or payment details.').setRequired(true).setMaxLength(1500)))
+    .addSubcommand(sub => sub
+      .setName('status')
+      .setDescription('Show your open tickets, or one ticket')
+      .addIntegerOption(o => o.setName('number').setDescription('Ticket number').setMinValue(1)))
+    .addSubcommand(sub => sub
+      .setName('assign')
+      .setDescription('Moderators: assign a ticket')
+      .addIntegerOption(o => o.setName('number').setDescription('Ticket number (omit inside the ticket thread)').setMinValue(1))
+      .addUserOption(o => o.setName('user').setDescription('Assignee (defaults to you)')))
+    .addSubcommand(sub => sub
+      .setName('waiting')
+      .setDescription('Moderators: mark a ticket as waiting on the participant')
+      .addStringOption(o => o.setName('note').setDescription('What you need from them').setRequired(true).setMaxLength(1000))
+      .addIntegerOption(o => o.setName('number').setDescription('Ticket number (omit inside the ticket thread)').setMinValue(1)))
+    .addSubcommand(sub => sub
+      .setName('resolve')
+      .setDescription('Moderators: resolve a ticket')
+      .addStringOption(o => o.setName('resolution').setDescription('The answer or fix, shown to the participant').setRequired(true).setMaxLength(1500))
+      .addBooleanOption(o => o.setName('add_to_knowledge_base').setDescription('Let HackerHelp answer similar questions with this resolution'))
+      .addIntegerOption(o => o.setName('number').setDescription('Ticket number (omit inside the ticket thread)').setMinValue(1)))
+    .addSubcommand(sub => sub
+      .setName('reopen')
+      .setDescription('Reopen a resolved ticket')
+      .addIntegerOption(o => o.setName('number').setDescription('Ticket number (omit inside the ticket thread)').setMinValue(1))),
+
   // /auth
   new SlashCommandBuilder()
     .setName('auth')

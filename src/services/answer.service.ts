@@ -1,7 +1,7 @@
 import { logger } from '../logger';
-import { getOpenAIClient, getOpenAIModel } from './openai.service';
+import { generateStructured, LlmRefusalError } from './llm.service';
 import { RetrievedSection, searchKnowledge } from './knowledge.service';
-import { UpstreamUnavailableError, withRetry } from './retry';
+import { UpstreamUnavailableError } from './retry';
 import { detectPromptInjection, detectSensitiveCategory, Priority, SensitiveCategory } from './triage-rules';
 
 /**
@@ -106,28 +106,16 @@ function citationsFor(sections: RetrievedSection[]): Citation[] {
   return [...seen.values()].sort((a, b) => b.similarity - a.similarity);
 }
 
-function parseDecision(raw: string | null | undefined): ModelDecision {
-  if (!raw) throw new Error('OpenAI returned an empty decision.');
-  const parsed = JSON.parse(raw);
+/** Structured outputs constrain the shape; this re-checks it so a provider regression can't slip through. */
+function validateDecision(parsed: any): ModelDecision {
   const decisions = ['answer', 'clarify', 'escalate', 'out_of_scope'];
-  if (!decisions.includes(parsed.decision) || !Array.isArray(parsed.cited_section_ids)) {
-    throw new Error('OpenAI returned a decision that does not match the schema.');
+  if (!parsed || !decisions.includes(parsed.decision) || !Array.isArray(parsed.cited_section_ids)) {
+    throw new Error('Model returned a decision that does not match the schema.');
   }
   return parsed as ModelDecision;
 }
 
 const ESCALATION_MESSAGE = 'This needs someone from the HackerRank team, so I won\'t guess. Please open a post in **#hacker-help-desk** (or email help@hackerrank.com). Don\'t share personal or payment details in public channels.';
-
-/**
- * Reasoning models (o-series, gpt-5 family) reject `temperature` and spend part of the
- * completion budget on hidden reasoning, so they get a larger cap and low effort.
- * Other models run at temperature 0 for repeatable triage decisions.
- */
-export function samplingParams(model: string) {
-  return /^(o\d|gpt-5)/i.test(model)
-    ? { reasoning_effort: 'low' as const, max_completion_tokens: 2000 }
-    : { temperature: 0, max_completion_tokens: 700 };
-}
 
 const BUSY_OR_FAILED =(error: unknown) => error instanceof UpstreamUnavailableError
   ? 'I\'m getting more questions than I can handle right now. Please try again in a few minutes, or ask in #ask-the-team.'
@@ -197,18 +185,18 @@ async function decide(question: string): Promise<AnswerResult> {
 
   let decision: ModelDecision;
   try {
-    const model = getOpenAIModel('OPENAI_CHAT_MODEL');
-    const response = await withRetry('openai.chat', () => getOpenAIClient().chat.completions.create({
-      model,
-      ...samplingParams(model),
-      response_format: { type: 'json_schema', json_schema: { name: 'triage_decision', strict: true, schema: DECISION_SCHEMA } },
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: `Documentation sections:\n${formatSections(retrieved)}\n\nParticipant message:\n<message>\n${question}\n</message>` }
-      ]
+    decision = validateDecision(await generateStructured({
+      system: SYSTEM_PROMPT,
+      user: `Documentation sections:\n${formatSections(retrieved)}\n\nParticipant message:\n<message>\n${question}\n</message>`,
+      schema: DECISION_SCHEMA,
+      // Triage is classification over a handful of short sections: low effort holds quality and keeps latency down.
+      effort: 'low'
     }));
-    decision = parseDecision(response.choices[0]?.message?.content);
   } catch (error: any) {
+    if (error instanceof LlmRefusalError) {
+      // A safety decline (after server-side fallback) is a case for a human, not an error.
+      return result({ outcome: 'escalate', message: ESCALATION_MESSAGE, reason: `model_refusal:${error.category ?? 'unspecified'}`, confidence: topSimilarity, retrieved });
+    }
     logger.error('Model decision failed', { name: error?.name, status: error?.status, detail: error?.message });
     return result({ outcome: 'error', message: BUSY_OR_FAILED(error), reason: upstreamReason(error, 'model_failed'), confidence: topSimilarity, retrieved });
   }
