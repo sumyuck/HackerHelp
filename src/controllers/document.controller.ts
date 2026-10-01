@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { parsePdfToMarkdown, parseDocxToMarkdown } from '../services/parser.service';
-import { uploadToDocMindStorage } from '../services/docmind.service';
+import { indexDocument, storeOriginal } from '../services/knowledge.service';
 import { logAction } from '../services/user.service';
 import { logger } from '../logger';
 
@@ -50,19 +50,28 @@ export async function uploadDocument(req: Request, res: Response): Promise<void>
       return;
     }
 
-    // Upload and index document sections through OpenAI and Supabase
-    const storagePath = await uploadToDocMindStorage(uploadFilename, markdownContent, 'text/markdown');
+    // Same filename => same slug and storage path, so re-uploading replaces rather than duplicates.
+    const safeName = uploadFilename.toLowerCase().replace(/[^a-z0-9._-]+/g, '-');
+    const slug = `upload/${safeName.replace(/\.md$/, '')}`;
+    const storagePath = `uploads/${safeName}`;
 
-    await logAction(actorId, 'upload_document_rag', 'Document', storagePath, { originalName, storagePath });
+    const storageObjectId = await storeOriginal(storagePath, markdownContent, 'text/markdown');
+    const sections = await indexDocument({
+      slug,
+      title: originalName.replace(/\.[^/.]+$/, ''),
+      body: markdownContent,
+      sourceUrl: null,
+      origin: 'upload',
+      verification: 'official',
+      storageObjectId
+    });
+
+    await logAction(actorId, 'upload_document_rag', 'Document', slug, { originalName, storagePath, sections });
 
     res.status(200).json({
       success: true,
       message: 'Document successfully uploaded and indexed.',
-      data: {
-        originalName,
-        storagePath,
-        contentType: 'text/markdown'
-      }
+      data: { originalName, slug, storagePath, sections }
     });
   } catch (error: any) {
     logger.error('Document upload and parse pipeline failed:', error);

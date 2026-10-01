@@ -9,8 +9,9 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "register-commands": "ts-node src/discord/register-commands.ts",
     "seed": "ts-node src/database/seed.ts",
-    "upload-rules": "ts-node src/database/upload-rules.ts",
-    "test": "ts-node src/tests/services.test.ts && ts-node src/tests/rag.test.ts && ts-node src/tests/hardening.test.ts"
+    "test": "ts-node src/tests/services.test.ts && ts-node src/tests/hardening.test.ts && ts-node src/tests/knowledge.test.ts && ts-node src/tests/answer.test.ts && ts-node src/tests/retry.test.ts",
+    "kb:ingest": "ts-node src/scripts/ingest-knowledge.ts",
+    "eval:rag": "ts-node src/scripts/eval-rag.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.43.4",

@@ -14,7 +14,10 @@ import * as hackathonService from '../services/hackathon.service';
 import * as teamService from '../services/team.service';
 import * as submissionService from '../services/submission.service';
 import * as judgeService from '../services/judge.service';
-import * as docmindService from '../services/docmind.service';
+import * as knowledgeService from '../services/knowledge.service';
+import { answerQuestion } from '../services/answer.service';
+import { composeText } from '../services/openai.service';
+import { buildAnswerEmbed } from './answer-presenter';
 import { Hackathon, Track, Team, Registration, Submission, User, GlobalRole, JudgeEvaluation } from '../database/models';
 import { logger } from '../logger';
 
@@ -297,7 +300,7 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
     .setTitle('HackerHelp - Help Desk')
     .setDescription('List of available slash commands for organizing and participating in hackathons:')
     .addFields(
-      { name: 'Participant Commands', value: '`/auth` - Sync your account\n`/register` - Complete hackathon signup modal\n`/profile` - View your participant card\n`/ask` - Query grounded AI helper' },
+      { name: 'Participant Commands', value: '`/auth` - Sync your account\n`/register` - Complete hackathon signup modal\n`/profile` - View your participant card\n`/ask` - Ask about Orchestrate (answers cite their sources)' },
       { name: 'Team Commands', value: '`/team create [name] [track_id]` - Form a team\n`/team invite [@user]` - Send team invite\n`/team info` - View your team\n`/team leave` - Leave current team\n`/team delete` - Disband team (Leader)' },
       { name: 'Submission Commands', value: '`/submission create` - Submit project draft\n`/submission update` - Submit a new version\n`/submission status` - View submit logs\n`/submission history` - View past versions' },
       { name: 'Info Commands', value: '`/hackathon list` - List hackathons\n`/track list` - List tracks' },
@@ -314,33 +317,8 @@ async function handleAsk(interaction: ChatInputCommandInteraction): Promise<void
   await interaction.deferReply();
   const question = interaction.options.getString('question', true);
 
-  // Call DocMind RAG Chat
-  const answer = await docmindService.askDocMindRAG([
-    {
-      role: 'system',
-      content: 'You are HackerHelp, a Discord-native AI support and hackathon operations assistant. Help participants with schedules, rules, FAQs, and setups.'
-    },
-    {
-      role: 'user',
-      content: question
-    }
-  ]);
-
-  const embed = new EmbedBuilder()
-    .setColor('#5D3FD3')
-    .setTitle('HackerHelp Assistant')
-    .addFields(
-      { name: 'Question', value: question },
-      { name: 'Answer', value: answer.substring(0, 1024) } // Discord field limit is 1024 chars
-    );
-    
-  if (answer.length > 1024) {
-    embed.addFields({ name: 'Answer (Cont.)', value: answer.substring(1024, 2048) });
-  }
-
-  embed.setFooter({ text: 'AI responses are strictly grounded in organization documentation.' });
-
-  await interaction.editReply({ embeds: [embed] });
+  const result = await answerQuestion(question);
+  await interaction.editReply({ embeds: [buildAnswerEmbed(result, question)] });
 }
 
 /**
@@ -749,7 +727,7 @@ async function handleAnnouncement(interaction: ChatInputCommandInteraction): Pro
     return;
   }
 
-  // Use RAG to generate variations
+  // Drafting is free-form generation, not a factual answer, so it bypasses the grounded answer pipeline.
   const prompt = `
 Generate three variations of the following announcement draft:
 
@@ -761,16 +739,10 @@ Draft: ${draftContent}
 3. **Short/SMS/Notification Version**: 2-sentence summary.
   `;
 
-  const response = await docmindService.askDocMindRAG([
-    {
-      role: 'system',
-      content: 'You are an expert copywriter and communications officer. Format documents beautifully with markdown.'
-    },
-    {
-      role: 'user',
-      content: prompt
-    }
-  ]);
+  const response = await composeText(
+    'You are an expert copywriter and communications officer. Format documents beautifully with markdown. Do not add facts (dates, prizes, links) that are not in the draft.',
+    prompt
+  );
 
   const embed = new EmbedBuilder()
     .setColor('#F75D59')
@@ -794,7 +766,8 @@ async function handleIndexCommands(interaction: ChatInputCommandInteraction): Pr
       .setDescription('To index lightweight files (PDF, DOCX, TXT, MD) into the Supabase database:')
       .addFields(
         { name: '1. Access Dashboard', value: 'Use the backend dashboard upload page or make an HTTP POST request.' },
-        { name: '2. API Details', value: 'Send form-data to `POST http://localhost:3000/api/documents/upload` containing:\n- `file`: Your document attachment\n- `actorId`: your discord ID' }
+        { name: '2. API Details', value: 'Send multipart form-data to `POST /api/documents/upload` with an `Authorization: Bearer <ADMIN_API_TOKEN>` header and a `file` field. Re-uploading a file with the same name replaces its previous version.' },
+        { name: 'Knowledge base', value: 'Curated docs live in the repository under `knowledge/` and are synced with `npm run kb:ingest`.' }
       )
       .setFooter({ text: 'All file processing converts documents to markdown sections and updates vectors automatically.' });
 
@@ -838,22 +811,30 @@ async function handleIndexCommands(interaction: ChatInputCommandInteraction): Pr
         }
       });
 
-      // Upload and index the channel archive through OpenAI and Supabase
-      const filename = `channel-${channel.name}-${Date.now()}.md`;
-      const storagePath = await docmindService.uploadToDocMindStorage(filename, mdArchive, 'text/markdown');
+      // One document per channel: re-indexing replaces the previous archive instead of piling up copies.
+      // Member messages are not verified facts, so the archive is labelled "community".
+      const slug = `discord/${channel.id}`;
+      const sections = await knowledgeService.indexDocument({
+        slug,
+        title: `#${channel.name} channel archive`,
+        body: mdArchive,
+        sourceUrl: null,
+        origin: 'discord_channel',
+        verification: 'community'
+      });
 
-      await userService.logAction(actorId, 'index_channel_messages', 'Channel', channel.id, { storagePath });
+      await userService.logAction(actorId, 'index_channel_messages', 'Channel', channel.id, { slug, sections });
 
       await interaction.editReply({
-        content: `Successfully compiled the last ${sorted.length} messages from <#${channel.id}>, uploaded, and indexed it as \`${filename}\`.`
+        content: `Indexed the last ${sorted.length} messages from <#${channel.id}> (${sections} sections). Re-running this replaces the previous archive.`
       });
     } catch (err: any) {
       logger.error('Channel indexing failed:', err);
-      await interaction.editReply({ content: `Indexing failed: ${err.message}` });
+      await interaction.editReply({ content: 'Indexing failed. Check the bot logs for details.' });
     }
   } 
   else if (subcommand === 'reindex') {
-    await interaction.reply({ content: 'HackerHelp generates embeddings when documents are uploaded. Re-upload source documents to rebuild their vectors; this command does not re-index existing data.', ephemeral: true });
+    await interaction.reply({ content: 'Run `npm run kb:ingest` on the server to sync the curated knowledge base. It re-embeds only documents that changed. Uploaded files are re-indexed by uploading them again.', ephemeral: true });
   }
 }
 

@@ -36,6 +36,16 @@ export function validateStartupConfig(env: NodeJS.ProcessEnv = process.env): str
     problems.push('ADMIN_API_TOKEN must be at least 32 characters (generate one with `openssl rand -hex 32`)');
   }
 
+  for (const name of ['RAG_RETRIEVAL_FLOOR', 'RAG_ANSWER_MIN_SIMILARITY'] as const) {
+    const value = env[name];
+    if (value !== undefined && value !== '' && !(Number(value) >= 0 && Number(value) <= 1)) {
+      problems.push(`${name} must be a number between 0 and 1`);
+    }
+  }
+  if (env.RAG_TOP_K && !(Number.isInteger(Number(env.RAG_TOP_K)) && Number(env.RAG_TOP_K) >= 1 && Number(env.RAG_TOP_K) <= 20)) {
+    problems.push('RAG_TOP_K must be an integer between 1 and 20');
+  }
+
   if (env.PORT && !/^\d+$/.test(env.PORT)) {
     problems.push('PORT must be a number');
   }

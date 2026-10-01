@@ -24,10 +24,11 @@ export const commandsDefinitions = [
   // /ask
   new SlashCommandBuilder()
     .setName('ask')
-    .setDescription('Ask the HackerHelp Assistant a question grounded in the indexed knowledge base')
+    .setDescription('Ask about HackerRank Orchestrate: dates, rules, submissions, interviews, prizes')
     .addStringOption(option => 
       option.setName('question')
         .setDescription('Your question')
+        .setMaxLength(1500)
         .setRequired(true)),
 
   // /track

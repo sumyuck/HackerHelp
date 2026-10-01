@@ -82,3 +82,6 @@ dist/
 # OS files (Optional but highly recommended)
 .DS_Store
 Thumbs.db
+
+# Eval run output (summaries are recorded in eval/RESULTS.md)
+eval/results/
