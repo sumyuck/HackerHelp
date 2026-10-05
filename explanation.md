@@ -15,6 +15,9 @@ src/
 ├── routes/api.ts                # HTTP route definitions
 ├── knowledge/markdown.ts        # Front-matter parsing and heading-aware chunking (pure)
 ├── tickets/                     # Ticket state machine and duplicate policy (pure)
+├── queue/
+│   ├── retry-policy.ts          # Queue retry decisions: backoff, Retry-After, delivery deadline (pure)
+│   └── support-queue.ts         # BullMQ queue, worker, dead-letter queue, inline fallback
 ├── analytics/support-metrics.ts # Support metric definitions over events and tickets (pure)
 ├── errors.ts                    # UserFacingError: the only error messages shown in Discord
 ├── database/                    # Mongoose models, connection, sample seed
@@ -25,6 +28,8 @@ src/
 │   ├── ticket-forum.ts          # TicketChannel implementation: forum posts, tags, moderator role
 │   ├── ticket-interactions.ts   # /ticket commands, ticket buttons, thread replies
 │   ├── support-analytics.ts     # /analytics embed (moderators only)
+│   ├── support-job-types.ts     # Support job payloads built from interactions and messages
+│   ├── support-jobs.ts          # Job processors and Discord delivery (idempotent)
 │   └── command-definitions.ts   # Slash command schemas and registration
 ├── services/
 │   ├── answer.service.ts        # Gates → retrieval → structured model decision → validation
@@ -110,7 +115,23 @@ The loader projects only the fields the metrics use and computes in memory, whic
 
 ## Upstream Failure Handling
 
-Both SDKs' own retries are disabled (`maxRetries: 0`). The OpenAI SDK sleeps for whatever `Retry-After` the server sends. A daily-quota 429 requests about 30 minutes, which outlives a Discord interaction. `withRetry` wraps every Anthropic and OpenAI call. It retries 408, 409, 429, 5xx (including Anthropic's 529 overloaded), and network errors up to 3 attempts, using full-jitter exponential backoff capped at 8 s. It fails fast with `UpstreamUnavailableError` (carrying `retryAfterMs`) on quota exhaustion or a longer `Retry-After`. The pipeline turns that into a "busy, try again shortly" reply. Sensitive messages still escalate when retrieval is down.
+Both SDKs' own retries are disabled (`maxRetries: 0`). The OpenAI SDK sleeps for whatever `Retry-After` the server sends. A daily-quota 429 requests about 30 minutes, which outlives a Discord interaction. `withRetry` wraps every Anthropic and OpenAI call. It retries 408, 409, 429, 5xx (including Anthropic's 529 overloaded), and network errors up to 3 attempts, using full-jitter exponential backoff capped at 8 s. It fails fast with `UpstreamUnavailableError` (carrying `retryAfterMs`) on quota exhaustion or a longer `Retry-After`. The pipeline turns that into a "busy, try again shortly" reply, or, inside a queued job with time left, lets the queue retry later (see Support Job Queue). Sensitive messages still escalate when retrieval is down.
+
+## Support Job Queue
+
+Discord handlers for `/ask`, @mentions, `/ticket open` and the "Open a ticket" buttons only defer the reply and enqueue a job. A BullMQ worker on Redis runs the answer pipeline or opens the ticket, then edits the deferred reply through the interaction webhook (or replies to the mention).
+
+**Idempotency.** A job can run more than once: Discord redelivers events, users double-click, workers stall, and an enqueue that times out falls back to running inline. Every step is safe to repeat.
+- The job ID is `<kind>-<interaction or message ID>`, so adding the same job again is a no-op. Completed jobs are kept for a day to preserve that.
+- The answer is checkpointed into the job data, so a retry after a failed delivery does not call the model again.
+- Support events carry a `dedupeKey` with a unique index, so analytics count each fact once. Pending ticket requests are upserts, and tickets are unique by `sourceKey`.
+- Interaction replies edit the deferred response, which is idempotent. Mention replies send the message ID as a Discord nonce with `enforceNonce`, and a `delivered` checkpoint stops later attempts from replying again.
+
+**Retries.** There are two layers. `withRetry` absorbs blips within one upstream call. The queue ([src/queue/retry-policy.ts](src/queue/retry-policy.ts)) reschedules the whole job for longer outages: up to 4 attempts, backoff from 5 s capped at 60 s, or exactly the provider's `Retry-After` when it is 60 s or less. A retry is only attempted if it can finish before the reply deadline, 14 minutes after the command, since interaction tokens expire at 15. The answer pipeline is told whether a retry is still possible (`rethrowIf`). On the last chance it degrades to the "busy" answer, which offers a ticket, instead of throwing. Quota exhaustion, 4xx errors, and programming errors are not retried.
+
+**Dead letters.** A job that fails for good notifies the user with a generic message (unless a reply was already delivered). It is then copied to the `support-dead-letter` queue with its error and attempt count, and with the interaction token redacted. `GET /api/queue` shows queue counts and recent dead letters, with IDs and errors but not question text.
+
+**Without Redis.** If `REDIS_URL` is unset, or Redis does not accept a job within 3 s, the same processor runs inline. The bot keeps answering, without queued retries or a dead-letter queue. `/ready` reports the queue mode and Redis connectivity but does not require Redis. Shutdown lets in-flight jobs finish while Discord is still connected; queued jobs wait in Redis (append-only file) until the next start.
 
 ## Operational Data
 
@@ -120,10 +141,10 @@ MongoDB stores users and global roles, hackathons and tracks, registrations, tea
 
 The entry point loads `.env`, validates configuration (`src/config.ts`), connects to MongoDB, starts Express, and logs in to Discord. It shuts these down in reverse order on `SIGTERM`/`SIGINT`. `/health` reports process liveness and `/ready` reports MongoDB and Discord connectivity.
 
-`/api/documents/upload` parses and indexes documentation; `/api/analytics` returns aggregate hackathon metrics and `/api/analytics/support` the support report. Every `/api/*` route requires `Authorization: Bearer <ADMIN_API_TOKEN>` (constant-time comparison), and the API is disabled when no token is configured. Request-body identity claims such as Discord user IDs are never treated as credentials.
+`/api/documents/upload` parses and indexes documentation; `/api/analytics` returns aggregate hackathon metrics, `/api/analytics/support` the support report, and `/api/queue` the job queue counts and recent dead letters. Every `/api/*` route requires `Authorization: Bearer <ADMIN_API_TOKEN>` (constant-time comparison), and the API is disabled when no token is configured. Request-body identity claims such as Discord user IDs are never treated as credentials.
 
 The bot responds only to direct @mentions: `@everyone` and role pings are ignored. The announcement composer and judge project summaries use free-form generation (`composeText`), not the knowledge-base pipeline, and treat participant-written text as data.
 
 ## Verification
 
-`npm test` runs the unit suites without network access. They cover config validation, API auth, front matter and chunking, the checked-in knowledge base files, triage-rule true and false positives, the answer pipeline's gates and downgrade paths, failure handling, the retry policy, and the ticket state machine, duplicate policy, and classifier floors, and the support analytics definitions. `npm run eval:rag` measures the live pipeline against labelled cases. CI runs install, build, and tests on Node.js 24.
+`npm test` runs the unit suites without network access. They cover config validation, API auth, front matter and chunking, the checked-in knowledge base files, triage-rule true and false positives, the answer pipeline's gates and downgrade paths, failure handling, the retry policy, and the ticket state machine, duplicate policy, and classifier floors, the support analytics definitions, and the job queue (retry and deadline policy, checkpointed idempotent processing, inline fallback). `npm run eval:rag` measures the live pipeline against labelled cases. CI runs install, build, and tests on Node.js 24.

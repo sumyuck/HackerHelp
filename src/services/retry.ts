@@ -15,12 +15,15 @@ import { logger } from '../logger';
  * can reschedule the work instead of blocking on it.
  */
 
+export type UnavailableKind = 'quota_exhausted' | 'retry_after_too_long' | 'attempts_exhausted';
+
 export class UpstreamUnavailableError extends Error {
   constructor(
     message: string,
     readonly operation: string,
     readonly status: number | null,
     readonly retryAfterMs: number | null,
+    readonly kind: UnavailableKind,
     readonly cause?: unknown
   ) {
     super(message);
@@ -62,7 +65,7 @@ function isQuotaExhausted(error: any): boolean {
   return code === 'insufficient_quota' || /requests per day|insufficient_quota|exceeded your current quota/i.test(String(error?.message ?? ''));
 }
 
-function isTransient(error: any): boolean {
+export function isTransient(error: any): boolean {
   const status = statusOf(error);
   if (status === null) {
     // No HTTP status: connection reset, DNS failure, or client-side timeout.
@@ -85,12 +88,12 @@ export async function withRetry<T>(operation: string, fn: () => Promise<T>, opti
       if (!isTransient(error)) throw error;
 
       const requested = retryAfterMs(error);
-      const unavailable = (why: string) =>
-        new UpstreamUnavailableError(`${operation} unavailable: ${why}`, operation, status, requested, error);
+      const unavailable = (kind: UnavailableKind, why: string) =>
+        new UpstreamUnavailableError(`${operation} unavailable: ${why}`, operation, status, requested, kind, error);
 
-      if (status === 429 && isQuotaExhausted(error)) throw unavailable('quota exhausted');
-      if (requested !== null && requested > maxDelayMs) throw unavailable(`server asked to retry after ${Math.round(requested / 1000)}s`);
-      if (attempt >= maxAttempts) throw unavailable(`failed after ${attempt} attempts`);
+      if (status === 429 && isQuotaExhausted(error)) throw unavailable('quota_exhausted', 'quota exhausted');
+      if (requested !== null && requested > maxDelayMs) throw unavailable('retry_after_too_long', `server asked to retry after ${Math.round(requested / 1000)}s`);
+      if (attempt >= maxAttempts) throw unavailable('attempts_exhausted', `failed after ${attempt} attempts`);
 
       // Full jitter spreads retries from concurrent callers instead of synchronising them.
       const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));

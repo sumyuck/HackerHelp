@@ -128,9 +128,17 @@ function result(partial: Partial<AnswerResult> & Pick<AnswerResult, 'outcome' | 
   return { citations: [], confidence: null, category: null, priority: null, retrieved: [], ...partial };
 }
 
-export async function answerQuestion(rawQuestion: string): Promise<AnswerResult> {
+export interface AnswerOptions {
+  /**
+   * Called with a retrieval or model failure. Returning true rethrows it instead of
+   * degrading to an 'error' result, so a queue worker can retry the job later.
+   */
+  rethrowIf?: (error: unknown) => boolean;
+}
+
+export async function answerQuestion(rawQuestion: string, options: AnswerOptions = {}): Promise<AnswerResult> {
   const startedAt = Date.now();
-  const outcome = await decide(rawQuestion.trim());
+  const outcome = await decide(rawQuestion.trim(), options);
   logger.info('Answer decision', {
     outcome: outcome.outcome,
     reason: outcome.reason,
@@ -143,7 +151,7 @@ export async function answerQuestion(rawQuestion: string): Promise<AnswerResult>
   return outcome;
 }
 
-async function decide(question: string): Promise<AnswerResult> {
+async function decide(question: string, options: AnswerOptions): Promise<AnswerResult> {
   if (question.length < 3) {
     return result({ outcome: 'clarify', message: 'Could you tell me a bit more about what you need help with?', reason: 'question_too_short' });
   }
@@ -161,11 +169,12 @@ async function decide(question: string): Promise<AnswerResult> {
   try {
     retrieved = await searchKnowledge(question, { limit: topK, minSimilarity: retrievalFloor });
   } catch (error: any) {
-    logger.error('Knowledge retrieval failed', { name: error?.name, status: error?.status, detail: error?.message });
     if (sensitive) {
       // The gate's verdict does not depend on retrieval; still route the user to a human.
       return result({ outcome: 'escalate', message: ESCALATION_MESSAGE, reason: `deterministic_gate:${sensitive.category}`, category: sensitive.category, priority: sensitive.priority });
     }
+    if (options.rethrowIf?.(error)) throw error;
+    logger.error('Knowledge retrieval failed', { name: error?.name, status: error?.status, detail: error?.message });
     return result({ outcome: 'error', message: BUSY_OR_FAILED(error), reason: upstreamReason(error, 'retrieval_failed') });
   }
   const topSimilarity = retrieved[0]?.similarity ?? null;
@@ -197,6 +206,7 @@ async function decide(question: string): Promise<AnswerResult> {
       // A safety decline (after server-side fallback) is a case for a human, not an error.
       return result({ outcome: 'escalate', message: ESCALATION_MESSAGE, reason: `model_refusal:${error.category ?? 'unspecified'}`, confidence: topSimilarity, retrieved });
     }
+    if (options.rethrowIf?.(error)) throw error;
     logger.error('Model decision failed', { name: error?.name, status: error?.status, detail: error?.message });
     return result({ outcome: 'error', message: BUSY_OR_FAILED(error), reason: upstreamReason(error, 'model_failed'), confidence: topSimilarity, retrieved });
   }

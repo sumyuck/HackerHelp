@@ -4,7 +4,9 @@ import { logger } from './logger';
 import { validateStartupConfig } from './config';
 import app from './app';
 import { connectDatabase, disconnectDatabase } from './database/connection';
-import { startDiscordBot, stopDiscordBot } from './discord/bot';
+import { client, startDiscordBot, stopDiscordBot } from './discord/bot';
+import { startSupportQueue, stopSupportQueue } from './queue/support-queue';
+import { defaultSupportJobHandlers } from './discord/support-jobs';
 
 const port = Number(process.env.PORT) || 3000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -31,13 +33,23 @@ async function bootstrap() {
     logger.info(`Express server running on http://localhost:${port}`);
   });
 
-  // 3. Start Discord Bot Client
+  // 3. Start the support job worker (or inline mode without REDIS_URL) before Discord delivers work.
+  startSupportQueue(defaultSupportJobHandlers(client), {
+    redisUrl: process.env.REDIS_URL?.trim() || undefined,
+    concurrency: Number(process.env.WORKER_CONCURRENCY) || undefined
+  });
+
+  // 4. Start Discord Bot Client
   await startDiscordBot();
 
   logger.info('HackerHelp services successfully started.');
 }
 
-/** Stops intake first (HTTP, Discord gateway), then closes the database. */
+/**
+ * Stops HTTP intake, lets in-flight support jobs finish while Discord is still
+ * connected (they deliver through it), then closes the gateway and the database.
+ * Unfinished queued jobs stay in Redis and resume on the next start.
+ */
 async function shutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -51,6 +63,7 @@ async function shutdown(signal: string) {
 
   try {
     if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
+    await stopSupportQueue();
     await stopDiscordBot();
     await disconnectDatabase();
     logger.info('Shutdown complete.');

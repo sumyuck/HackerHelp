@@ -46,6 +46,13 @@ export function validateStartupConfig(env: NodeJS.ProcessEnv = process.env): str
     problems.push('RAG_TOP_K must be an integer between 1 and 20');
   }
 
+  if (env.REDIS_URL?.trim() && !/^rediss?:\/\//.test(env.REDIS_URL.trim())) {
+    problems.push('REDIS_URL must be a redis:// or rediss:// URL');
+  }
+  if (env.WORKER_CONCURRENCY && !(Number.isInteger(Number(env.WORKER_CONCURRENCY)) && Number(env.WORKER_CONCURRENCY) >= 1 && Number(env.WORKER_CONCURRENCY) <= 50)) {
+    problems.push('WORKER_CONCURRENCY must be an integer between 1 and 50');
+  }
+
   if (env.PORT && !/^\d+$/.test(env.PORT)) {
     problems.push('PORT must be a number');
   }

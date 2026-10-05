@@ -19,15 +19,14 @@ import * as knowledgeService from '../services/knowledge.service';
 import { answerQuestion } from '../services/answer.service';
 import { generateText } from '../services/llm.service';
 import { buildAnswerEmbed } from './answer-presenter';
-import { handleTicketCommand, supportFollowUp } from './ticket-interactions';
+import { handleTicketCommand } from './ticket-interactions';
+import { dispatchSupportJob } from '../queue/support-queue';
+import { jobFromInteraction, SupportJob } from './support-job-types';
 import { handleAnalyticsCommand } from './support-analytics';
 import { Hackathon, Track, Team, Registration, Submission, User, GlobalRole, JudgeEvaluation } from '../database/models';
 import { logger } from '../logger';
-import { UserFacingError } from '../errors';
-
 // Only messages written for users are shown; anything else may contain internals and is logged instead.
-const userMessage = (error: unknown) =>
-  error instanceof UserFacingError ? error.message : 'Something went wrong on our side. Please try again, or ask a moderator.';
+import { userMessage } from '../errors';
 
 /**
  * Main entrance router for all slash command interactions.
@@ -329,13 +328,8 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
  */
 async function handleAsk(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply();
-  const question = interaction.options.getString('question', true);
-
-  const result = await answerQuestion(question);
-  const components = await supportFollowUp(result, {
-    id: interaction.id, guildId: interaction.guildId, userId: interaction.user.id, userTag: interaction.user.tag, question
-  });
-  await interaction.editReply({ embeds: [buildAnswerEmbed(result, question)], components });
+  // The model call runs in a support job; the job edits this deferred reply.
+  await dispatchSupportJob<SupportJob>({ ...jobFromInteraction(interaction), kind: 'answer', question: interaction.options.getString('question', true) });
 }
 
 /**

@@ -7,9 +7,9 @@ import {
   Partials 
 } from 'discord.js';
 import { handleSlashCommandInteraction, handleRegisterModalSubmit } from './commands-handler';
-import { answerQuestion } from '../services/answer.service';
-import { buildAnswerEmbed } from './answer-presenter';
-import { handleTicketButton, handleTicketThreadMessage, supportFollowUp } from './ticket-interactions';
+import { handleTicketButton, handleTicketThreadMessage } from './ticket-interactions';
+import { dispatchSupportJob } from '../queue/support-queue';
+import { jobFromMessage, SupportJob } from './support-job-types';
 import { initTicketForum } from './ticket-forum';
 import { logger } from '../logger';
 
@@ -85,11 +85,7 @@ export async function startDiscordBot(): Promise<void> {
       }
 
       if ('sendTyping' in message.channel) await message.channel.sendTyping();
-      const result = await answerQuestion(question);
-      const components = await supportFollowUp(result, {
-        id: message.id, guildId: message.guildId, userId: message.author.id, userTag: message.author.tag, question
-      });
-      await message.reply({ embeds: [buildAnswerEmbed(result)], components, allowedMentions: { repliedUser: true } });
+      await dispatchSupportJob<SupportJob>({ ...jobFromMessage(message), kind: 'answer', question });
     } catch (error) {
       logger.error('Failed to answer mention message', { messageId: message.id, error });
       await message.reply({

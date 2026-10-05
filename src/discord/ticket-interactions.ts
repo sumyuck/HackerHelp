@@ -4,7 +4,7 @@ import {
 } from 'discord.js';
 import { logger } from '../logger';
 import { ITicketDocument } from '../database/ticket.models';
-import { answerQuestion, AnswerResult } from '../services/answer.service';
+import type { AnswerResult } from '../services/answer.service';
 import {
   applyTicketAction, findTicket, getPendingRequest, listOpenTicketsFor, OpenTicketInput, openTicket,
   recordEvent, savePendingRequest
@@ -12,6 +12,8 @@ import {
 import type { TicketAction } from '../tickets/ticket-state';
 import { buildAnswerEmbed } from './answer-presenter';
 import { buildTicketEmbed, forumTicketChannel, isModerator, ticketForumId, ticketsEnabled } from './ticket-forum';
+import { dispatchSupportJob } from '../queue/support-queue';
+import { jobFromInteraction, SupportJob } from './support-job-types';
 
 /**
  * Discord entry points for support: answer → optional handoff → ticket.
@@ -23,6 +25,9 @@ import { buildTicketEmbed, forumTicketChannel, isModerator, ticketForumId, ticke
  *
  * Button custom IDs carry only a pending-request ID; the question and triage
  * result are stored server-side (see PendingTicketRequest).
+ *
+ * Anything that calls a model or opens a ticket is deferred and dispatched as a
+ * support job (support-jobs.ts); the reply builders below run inside that job.
  */
 
 const OUTCOME_EVENT = {
@@ -41,16 +46,17 @@ function button(id: string, label: string, style: ButtonStyle) {
   return new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);
 }
 
+export interface SupportSource { id: string; guildId: string | null; userId: string; userTag: string; question: string }
+
 /**
  * Records the outcome and returns follow-up buttons for an answer. Stores the
  * context needed to open a ticket later, keyed by the originating interaction or message.
+ * Idempotent, so a retried job can call it again.
  */
-export async function supportFollowUp(
-  result: AnswerResult,
-  source: { id: string; guildId: string | null; userId: string; userTag: string; question: string }
-): Promise<ActionRowBuilder<ButtonBuilder>[]> {
+export async function supportFollowUp(result: AnswerResult, source: SupportSource): Promise<ActionRowBuilder<ButtonBuilder>[]> {
   if (!source.guildId) return [];
-  await recordEvent({ guildId: source.guildId, type: OUTCOME_EVENT[result.outcome], userId: source.userId, category: result.category ?? undefined, reason: result.reason });
+  const type = OUTCOME_EVENT[result.outcome];
+  await recordEvent({ guildId: source.guildId, type, userId: source.userId, category: result.category ?? undefined, reason: result.reason, dedupeKey: `${source.id}:${type}` });
 
   const offerTicket = ticketsEnabled() && (result.outcome === 'escalate' || result.outcome === 'answered' || result.outcome === 'error');
   if (!offerTicket) return [];
@@ -84,7 +90,7 @@ function ticketLink(ticket: ITicketDocument): string {
   return url ? `[#${ticket.number}](${url})` : `#${ticket.number}`;
 }
 
-type TicketReply = { content?: string; embeds?: EmbedBuilder[]; components?: ActionRowBuilder<ButtonBuilder>[] };
+export type TicketReply = { content?: string; embeds?: EmbedBuilder[]; components?: ActionRowBuilder<ButtonBuilder>[] };
 
 /** Returns the reply plus whether a ticket now exists (so the originating buttons can be removed). */
 async function runOpenTicket(input: OpenTicketInput): Promise<{ reply: TicketReply; ticketExists: boolean }> {
@@ -128,14 +134,29 @@ export async function handleTicketButton(interaction: ButtonInteraction): Promis
   }
 
   if (kind === 'solved' || kind === 'reused') {
-    await recordEvent({ guildId: pending.guildId, type: kind === 'solved' ? 'answer_marked_helpful' : 'resolution_reused', userId: pending.userId });
+    const type = kind === 'solved' ? 'answer_marked_helpful' : 'resolution_reused';
+    // Keyed by the request, so double clicks count once.
+    await recordEvent({ guildId: pending.guildId, type, userId: pending.userId, dedupeKey: `${pending._id}:${type}` });
     await interaction.update({ components: [] });
     await interaction.followUp({ content: 'Glad that helped! 🎉', flags: MessageFlags.Ephemeral });
     return;
   }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const { reply, ticketExists } = await runOpenTicket({
+  await dispatchSupportJob<SupportJob>({
+    ...jobFromInteraction(interaction),
+    kind: 'ticket_request',
+    pendingId: pending._id,
+    forceCreate: kind === 'anyway',
+    buttonMessage: { channelId: interaction.message.channelId, messageId: interaction.message.id }
+  });
+}
+
+/** Runs inside a ticket_request job. */
+export async function ticketRequestReply(pendingId: string, forceCreate: boolean): Promise<{ reply: TicketReply; ticketExists: boolean }> {
+  const pending = await getPendingRequest(pendingId);
+  if (!pending) return { ticketExists: false, reply: { content: 'This request has expired. Run `/ticket open` to start a new ticket.' } };
+  return runOpenTicket({
     // Same key for every press of this message's buttons: double clicks and retries reuse one ticket.
     sourceKey: pending._id,
     guildId: pending.guildId,
@@ -146,13 +167,8 @@ export async function handleTicketButton(interaction: ButtonInteraction): Promis
     sensitiveCategory: pending.sensitiveCategory as OpenTicketInput['sensitiveCategory'],
     priority: pending.priority,
     context: pending.context,
-    forceCreate: kind === 'anyway'
+    forceCreate
   });
-  await interaction.editReply(reply);
-  // Once a ticket exists, the original buttons are spent.
-  if (ticketExists) {
-    await interaction.message.edit({ components: [] }).catch(() => undefined);
-  }
 }
 
 async function resolveTicketRef(interaction: ChatInputCommandInteraction): Promise<ITicketDocument | null> {
@@ -177,33 +193,7 @@ export async function handleTicketCommand(interaction: ChatInputCommandInteracti
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   if (subcommand === 'open') {
-    const issue = interaction.options.getString('issue', true);
-    // Deflection: if the knowledge base answers it, show that first with a one-click escape hatch.
-    const result = await answerQuestion(issue);
-    const source = { id: interaction.id, guildId: interaction.guildId, userId: interaction.user.id, userTag: interaction.user.tag, question: issue };
-    if (result.outcome === 'answered') {
-      const components = await supportFollowUp(result, source);
-      await interaction.editReply({ content: 'Before opening a ticket, this might answer it:', embeds: [buildAnswerEmbed(result, issue)], components });
-      return;
-    }
-    if (result.outcome === 'clarify' || result.outcome === 'out_of_scope' || result.outcome === 'refused') {
-      await recordEvent({ guildId: interaction.guildId, type: OUTCOME_EVENT[result.outcome], userId: interaction.user.id, reason: result.reason });
-      await interaction.editReply({ embeds: [buildAnswerEmbed(result, issue)] });
-      return;
-    }
-    await recordEvent({ guildId: interaction.guildId, type: OUTCOME_EVENT[result.outcome], userId: interaction.user.id, category: result.category ?? undefined, reason: result.reason });
-    const { reply } = await runOpenTicket({
-      sourceKey: interaction.id,
-      guildId: interaction.guildId,
-      creatorId: interaction.user.id,
-      creatorTag: interaction.user.tag,
-      question: issue,
-      escalationReason: result.reason,
-      sensitiveCategory: result.category,
-      priority: result.priority,
-      context: contextOf(result)
-    });
-    await interaction.editReply(reply);
+    await dispatchSupportJob<SupportJob>({ ...jobFromInteraction(interaction), kind: 'ticket_open', issue: interaction.options.getString('issue', true) });
     return;
   }
 
@@ -247,6 +237,36 @@ export async function handleTicketCommand(interaction: ChatInputCommandInteracti
     ? ' The resolution was added to the knowledge base, so similar questions will now be answered automatically.'
     : '';
   await interaction.editReply({ content: `Ticket ${ticketLink(result.ticket)} is now **${result.ticket.status.replace('_', ' ')}**.${extra}` });
+}
+
+/**
+ * Runs inside a ticket_open job, after the answer pipeline. Deflection: if the
+ * knowledge base answers it, show that first with a one-click escape hatch.
+ */
+export async function ticketOpenReply(result: AnswerResult, source: SupportSource & { guildId: string }): Promise<TicketReply> {
+  if (result.outcome === 'answered') {
+    const components = await supportFollowUp(result, source);
+    return { content: 'Before opening a ticket, this might answer it:', embeds: [buildAnswerEmbed(result, source.question)], components };
+  }
+  const type = OUTCOME_EVENT[result.outcome];
+  const event = { guildId: source.guildId, type, userId: source.userId, reason: result.reason, dedupeKey: `${source.id}:${type}` };
+  if (result.outcome === 'clarify' || result.outcome === 'out_of_scope' || result.outcome === 'refused') {
+    await recordEvent(event);
+    return { embeds: [buildAnswerEmbed(result, source.question)] };
+  }
+  await recordEvent({ ...event, category: result.category ?? undefined });
+  const { reply } = await runOpenTicket({
+    sourceKey: source.id,
+    guildId: source.guildId,
+    creatorId: source.userId,
+    creatorTag: source.userTag,
+    question: source.question,
+    escalationReason: result.reason,
+    sensitiveCategory: result.category,
+    priority: result.priority,
+    context: contextOf(result)
+  });
+  return reply;
 }
 
 /** When the participant replies in a ticket that was waiting on them, hand it back to the assignee. */

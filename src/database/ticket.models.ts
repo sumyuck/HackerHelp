@@ -145,6 +145,8 @@ export interface ISupportEvent {
   category?: string;
   reason?: string;
   details?: Record<string, unknown>;
+  /** Set when the same fact could be recorded twice (job retries, double clicks); unique per guild. */
+  dedupeKey?: string;
   createdAt: Date;
 }
 
@@ -156,9 +158,11 @@ const SupportEventSchema = new Schema<ISupportEvent>({
   category: String,
   reason: String,
   details: Schema.Types.Mixed,
+  dedupeKey: String,
   createdAt: { type: Date, default: Date.now }
 });
 SupportEventSchema.index({ guildId: 1, type: 1, createdAt: -1 });
+SupportEventSchema.index({ guildId: 1, dedupeKey: 1 }, { unique: true, partialFilterExpression: { dedupeKey: { $type: 'string' } } });
 
 export const Ticket = model<ITicketDocument>('Ticket', TicketSchema);
 export const Counter = model('Counter', CounterSchema);

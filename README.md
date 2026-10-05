@@ -60,16 +60,21 @@ Thresholds come from measured data, not guesses: see [eval/RESULTS.md](eval/RESU
 - **Support analytics**: moderator-only `/analytics [days]` reports question volume by outcome, the confirmed self-serve rate, tickets by status and category, duplicates prevented, resolutions reused or added to knowledge, median time to first moderator action and to resolution, and the top unresolved issues. Every figure is computed from recorded support events and tickets; the same report is at `GET /api/analytics/support`.
 - **Additional sources**: admin upload of PDF, DOCX, Markdown, and text files, and indexing of a channel's recent history. Re-indexing replaces the previous version.
 - **Hackathon operations**: registration and profiles, teams (invites, leadership transfer), submissions with version history, judge rubric scoring and AI-assisted summaries, an announcement composer, roles, and audit logging.
+- **Job queue**: model calls and ticket creation run as BullMQ jobs on Redis. Discord handlers only defer and enqueue. Jobs are keyed by the Discord interaction or message ID, so a redelivered event or double submit does nothing new. Retries honour the provider's `Retry-After`, but only while the reply can still reach the user (interaction tokens expire after 15 minutes); otherwise the job degrades to a "busy" reply with a ticket button. Progress is checkpointed so a retry never repeats a model call or a reply, and jobs that fail for good land in a dead-letter queue. Without Redis the same jobs run inline.
 - **Operations**: startup config validation, liveness and readiness probes, graceful shutdown, a token-protected admin API, and structured JSON logs.
 ## Architecture
 
 ```text
-Discord ──► Discord.js bot ──► answer pipeline ──► Anthropic Claude (decisions, drafting)
+Discord ──► Discord.js bot ──defer + enqueue──► Redis (BullMQ) ──► support worker
+                │                                                       │
+                │      ┌────────────────────────────────────────────────┘
+                │      ▼
+                │  answer pipeline ──► Anthropic Claude (decisions, drafting)
                 │                     ├──────────► OpenAI (embeddings)
                 │                     │
                 │                     └──────────► Supabase Postgres + pgvector
                 │                                  (documents, sections, ticket vectors)
-                ├──► ticket service ─────────────► MongoDB (tickets, support events)
+                ├──► ticket service (in worker) ─► MongoDB (tickets, support events)
                 │      └─ TicketChannel port ────► #hacker-help-desk forum posts
                 └──► hackathon services ─────────► MongoDB (users, teams, submissions,
                                                     judging, audit log)
@@ -80,7 +85,7 @@ See [explanation.md](explanation.md) for the code layout and data flow.
 
 ## Tech stack
 
-TypeScript on Node.js 24, Discord.js 14, Anthropic SDK (Claude), OpenAI SDK (embeddings), Supabase (Postgres, pgvector, Storage), MongoDB with Mongoose, Express, Docker Compose, GitHub Actions.
+TypeScript on Node.js 24, Discord.js 14, Anthropic SDK (Claude), OpenAI SDK (embeddings), Supabase (Postgres, pgvector, Storage), MongoDB with Mongoose, BullMQ on Redis, Express, Docker Compose, GitHub Actions.
 
 ## Setup
 
@@ -103,6 +108,8 @@ cp .env.example .env
 | `OPENAI_API_KEY` | OpenAI API key, used for embeddings only |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` (the schema uses 1536 dimensions) |
 | `MONGODB_URI` | MongoDB connection string (`MONGO_URI` accepted as a legacy fallback) |
+| `REDIS_URL` | Redis for the support job queue (Compose sets it). Leave empty to run jobs inline, without queued retries |
+| `WORKER_CONCURRENCY` | Optional; support jobs processed in parallel, default 4 |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role or secret key (server-side only) |
 | `SUPER_ADMIN_IDS` | Comma-separated Discord user IDs with full admin rights |
@@ -130,7 +137,7 @@ docker compose exec app node dist/discord/register-commands.js
 docker compose exec app node dist/scripts/ingest-knowledge.js
 ```
 
-Compose runs the bot and MongoDB. It publishes ports on loopback only, health-checks the app via `/ready`, and restarts it on failure. Without Docker, use `npm run dev` (or `npm run build && npm start`), `npm run register-commands`, and `npm run kb:ingest`.
+Compose runs the bot, MongoDB, and Redis (append-only, so queued jobs survive a restart). It publishes ports on loopback only, health-checks the app via `/ready`, and restarts it on failure. Without Docker, use `npm run dev` (or `npm run build && npm start`), `npm run register-commands`, and `npm run kb:ingest`.
 
 `npm run seed` adds a sample event and tracks for the hackathon operations commands.
 
@@ -144,11 +151,11 @@ Compose runs the bot and MongoDB. It publishes ports on loopback only, health-ch
 | `npm run eval:rag` | Evaluate the answer pipeline (`-- --retrieval-only` makes no chat calls) |
 | `npm run eval:dedup` | Calibrate ticket duplicate detection (`-- --canonical` uses the classifier, as production does) |
 | `npm run seed` | Sample hackathon data |
-| `npm test` | Unit tests: config, API auth, chunking, triage rules, answer pipeline, retry policy. Network calls are mocked. |
+| `npm test` | Unit tests: config, API auth, chunking, triage rules, answer pipeline, retry policy, tickets, analytics, job queue. Network calls are mocked. |
 
 Ticket commands: `/ticket open`, `/ticket status`, and for moderators `/ticket assign`, `/ticket waiting`, `/ticket resolve` (optionally `add_to_knowledge_base`), and `/ticket reopen`. Inside a ticket thread the ticket number can be omitted.
 
-Operators can also `POST /api/documents/upload` (multipart `file`, `Authorization: Bearer <ADMIN_API_TOKEN>`). Admins can run `/index channel` in Discord.
+Operators can also `POST /api/documents/upload` (multipart `file`, `Authorization: Bearer <ADMIN_API_TOKEN>`) and inspect the job queue and recent dead letters with `GET /api/queue`. Admins can run `/index channel` in Discord.
 
 ## Known limitations
 

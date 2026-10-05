@@ -4,6 +4,7 @@ import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
 import apiRouter from './routes/api';
 import { client } from './discord/bot';
+import { redisConnected, supportQueueMode } from './queue/support-queue';
 
 const app = express();
 
@@ -36,7 +37,8 @@ app.get('/ready', (req, res) => {
     discord: client.isReady()
   };
   const ready = Object.values(checks).every(Boolean);
-  res.status(ready ? 200 : 503).json({ status: ready ? 'READY' : 'NOT_READY', checks });
+  // Redis is reported but not required: without it support jobs run inline.
+  res.status(ready ? 200 : 503).json({ status: ready ? 'READY' : 'NOT_READY', checks, queue: { mode: supportQueueMode(), redisConnected: redisConnected() } });
 });
 
 export default app;

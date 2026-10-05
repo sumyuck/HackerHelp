@@ -46,11 +46,13 @@ export type OpenTicketResult =
 
 export async function recordEvent(event: {
   guildId: string; type: SupportEventType; userId: string; ticketNumber?: number;
-  category?: string; reason?: string; details?: Record<string, unknown>;
+  category?: string; reason?: string; details?: Record<string, unknown>; dedupeKey?: string;
 }): Promise<void> {
   try {
     await SupportEvent.create(event);
   } catch (error) {
+    // Already recorded (a retried job or a repeated click): the fact counts once.
+    if (isDuplicateKeyError(error)) return;
     // Analytics must never break the support flow.
     logger.error('Failed to record support event', { type: event.type, error });
   }
@@ -108,7 +110,7 @@ export async function openTicket(input: OpenTicketInput, channel: TicketChannel)
   if (decision.action === 'existing_own_ticket') {
     const existing = await Ticket.findById(decision.match.ticketId);
     if (existing && OPEN_STATUSES.includes(existing.status)) {
-      await recordEvent({ guildId: input.guildId, type: 'duplicate_prevented', userId: input.creatorId, ticketNumber: existing.number, details: { similarity: decision.match.similarity } });
+      await recordEvent({ guildId: input.guildId, type: 'duplicate_prevented', userId: input.creatorId, ticketNumber: existing.number, details: { similarity: decision.match.similarity }, dedupeKey: `${input.sourceKey}:duplicate_prevented` });
       return { kind: 'existing', ticket: await ensureThread(existing, channel), why: 'own_duplicate' };
     }
   }
@@ -155,7 +157,8 @@ export async function openTicket(input: OpenTicketInput, channel: TicketChannel)
   }
   await recordEvent({
     guildId: ticket.guildId, type: 'ticket_created', userId: ticket.creatorId, ticketNumber: ticket.number,
-    category: ticket.category, reason: ticket.escalationReason, details: { priority: ticket.priority, related: ticket.relatedTicketNumbers }
+    category: ticket.category, reason: ticket.escalationReason, details: { priority: ticket.priority, related: ticket.relatedTicketNumbers },
+    dedupeKey: `${ticket.sourceKey}:ticket_created`
   });
   logger.info('Ticket created', { number: ticket.number, category: ticket.category, priority: ticket.priority, reason: ticket.escalationReason });
   return { kind: 'created', ticket };
