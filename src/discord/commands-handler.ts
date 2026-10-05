@@ -20,6 +20,7 @@ import { answerQuestion } from '../services/answer.service';
 import { generateText } from '../services/llm.service';
 import { buildAnswerEmbed } from './answer-presenter';
 import { handleTicketCommand, supportFollowUp } from './ticket-interactions';
+import { handleAnalyticsCommand } from './support-analytics';
 import { Hackathon, Track, Team, Registration, Submission, User, GlobalRole, JudgeEvaluation } from '../database/models';
 import { logger } from '../logger';
 import { UserFacingError } from '../errors';
@@ -56,6 +57,9 @@ export async function handleSlashCommandInteraction(interaction: ChatInputComman
         break;
       case 'ticket':
         await handleTicketCommand(interaction);
+        break;
+      case 'analytics':
+        await handleAnalyticsCommand(interaction);
         break;
       case 'track':
         await handleTrackCommands(interaction);
@@ -314,7 +318,7 @@ async function handleHelp(interaction: ChatInputCommandInteraction): Promise<voi
       { name: 'Team Commands', value: '`/team create [name] [track_id]` - Form a team\n`/team invite [@user]` - Send team invite\n`/team info` - View your team\n`/team leave` - Leave current team\n`/team delete` - Disband team (Leader)' },
       { name: 'Submission Commands', value: '`/submission create` - Submit project draft\n`/submission update` - Submit a new version\n`/submission status` - View submit logs\n`/submission history` - View past versions' },
       { name: 'Info Commands', value: '`/hackathon list` - List hackathons\n`/track list` - List tracks' },
-      { name: 'Judge & Admin Commands', value: '`/judge dashboard` - Score panel\n`/admin analytics` - Hackathon metrics\n`/admin settings` - Modify hackathon status\n`/admin roles` - Adjust users permissions' }
+      { name: 'Judge & Admin Commands', value: '`/judge dashboard` - Score panel\n`/analytics` - Support metrics (moderators)\n`/admin analytics` - Hackathon metrics\n`/admin settings` - Modify hackathon status\n`/admin roles` - Adjust users permissions' }
     );
 
   await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });

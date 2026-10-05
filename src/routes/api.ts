@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { getAnalyticsMetrics } from '../controllers/analytics.controller';
+import { getAnalyticsMetrics, getSupportAnalytics } from '../controllers/analytics.controller';
 import { uploadDocument } from '../controllers/document.controller';
 import { requireAdminToken } from '../middleware/admin-auth';
 
@@ -17,6 +17,7 @@ router.use(requireAdminToken);
 
 // Analytics Dashboard Endpoint
 router.get('/analytics', getAnalyticsMetrics);
+router.get('/analytics/support', getSupportAnalytics);
 
 // RAG Document Indexing Upload Endpoint
 router.post('/documents/upload', upload.single('file'), uploadDocument);

@@ -34,6 +34,12 @@ export const commandsDefinitions = [
       .setDescription('Reopen a resolved ticket')
       .addIntegerOption(o => o.setName('number').setDescription('Ticket number (omit inside the ticket thread)').setMinValue(1))),
 
+  // /analytics
+  new SlashCommandBuilder()
+    .setName('analytics')
+    .setDescription('Moderators: support volume, self-serve rate, tickets and response times')
+    .addIntegerOption(o => o.setName('days').setDescription('Window in days (default 30)').setMinValue(1).setMaxValue(365)),
+
   // /auth
   new SlashCommandBuilder()
     .setName('auth')

@@ -15,6 +15,7 @@ src/
 ├── routes/api.ts                # HTTP route definitions
 ├── knowledge/markdown.ts        # Front-matter parsing and heading-aware chunking (pure)
 ├── tickets/                     # Ticket state machine and duplicate policy (pure)
+├── analytics/support-metrics.ts # Support metric definitions over events and tickets (pure)
 ├── errors.ts                    # UserFacingError: the only error messages shown in Discord
 ├── database/                    # Mongoose models, connection, sample seed
 ├── discord/
@@ -23,6 +24,7 @@ src/
 │   ├── answer-presenter.ts      # Renders an AnswerResult as a Discord embed
 │   ├── ticket-forum.ts          # TicketChannel implementation: forum posts, tags, moderator role
 │   ├── ticket-interactions.ts   # /ticket commands, ticket buttons, thread replies
+│   ├── support-analytics.ts     # /analytics embed (moderators only)
 │   └── command-definitions.ts   # Slash command schemas and registration
 ├── services/
 │   ├── answer.service.ts        # Gates → retrieval → structured model decision → validation
@@ -35,6 +37,7 @@ src/
 │   ├── ticket.service.ts        # Ticket workflows (create, dedup, transitions, resolutions → KB)
 │   ├── ticket-classifier.service.ts # Title, summary, category, priority, canonical issue
 │   ├── ticket-similarity.service.ts # Ticket vectors in pgvector
+│   ├── support-analytics.service.ts # Loads a guild's events and tickets for a window
 │   ├── parser.service.ts        # PDF and DOCX text extraction
 │   └── *.service.ts             # User, event, team, submission, and judging workflows
 ├── scripts/
@@ -90,6 +93,14 @@ Tickets are the handoff path when the answer pipeline should not answer. They ar
 
 **Support events.** Each answer outcome, helpful-answer click, prevented duplicate, reused resolution, ticket creation, and transition is appended to `SupportEvent`. Analytics are computed from these facts. Recording never blocks or fails the support flow.
 
+**Analytics.** `/analytics [days]` (moderators only, default 30 days) and `GET /api/analytics/support?guildId=&days=` compute one report from the window's events and tickets ([src/analytics/support-metrics.ts](src/analytics/support-metrics.ts), pure and unit-tested). The definitions are deliberately conservative:
+- *Self-serve* counts only explicit "This solved it" and "That solved it" clicks, so it is a lower bound. The self-serve rate is confirmed self-serve divided by confirmed self-serve plus tickets created.
+- *Time to first moderator action* and *time to resolution* are medians over tickets created in the window that reached that point; tickets still waiting are reported as a count rather than dropped silently.
+- *Top unresolved issues* group open tickets by canonical issue, ignoring case and trailing punctuation. They are ranked by ticket count, then by the longest wait.
+- Empty denominators show `n/a`, not 0%.
+
+The loader projects only the fields the metrics use and computes in memory, which fits one server's volume; a much larger deployment would move it to a MongoDB `$group` aggregation.
+
 ## Knowledge Ingestion
 
 - **Curated knowledge base.** `knowledge/**/*.md` files carry front matter (`title`, `source_url`, `verification: official | derived | community`). The path is the stable slug. `kb:ingest` computes a SHA-256 over the body, metadata, chunker version, and embedding model, and skips documents whose stored hash matches. A no-op sync makes zero API calls. `--prune` deletes indexed knowledge-base documents whose files were removed.
@@ -109,10 +120,10 @@ MongoDB stores users and global roles, hackathons and tracks, registrations, tea
 
 The entry point loads `.env`, validates configuration (`src/config.ts`), connects to MongoDB, starts Express, and logs in to Discord. It shuts these down in reverse order on `SIGTERM`/`SIGINT`. `/health` reports process liveness and `/ready` reports MongoDB and Discord connectivity.
 
-`/api/documents/upload` parses and indexes documentation; `/api/analytics` returns aggregate metrics. Every `/api/*` route requires `Authorization: Bearer <ADMIN_API_TOKEN>` (constant-time comparison), and the API is disabled when no token is configured. Request-body identity claims such as Discord user IDs are never treated as credentials.
+`/api/documents/upload` parses and indexes documentation; `/api/analytics` returns aggregate hackathon metrics and `/api/analytics/support` the support report. Every `/api/*` route requires `Authorization: Bearer <ADMIN_API_TOKEN>` (constant-time comparison), and the API is disabled when no token is configured. Request-body identity claims such as Discord user IDs are never treated as credentials.
 
 The bot responds only to direct @mentions: `@everyone` and role pings are ignored. The announcement composer and judge project summaries use free-form generation (`composeText`), not the knowledge-base pipeline, and treat participant-written text as data.
 
 ## Verification
 
-`npm test` runs the unit suites without network access. They cover config validation, API auth, front matter and chunking, the checked-in knowledge base files, triage-rule true and false positives, the answer pipeline's gates and downgrade paths, failure handling, the retry policy, and the ticket state machine, duplicate policy, and classifier floors. `npm run eval:rag` measures the live pipeline against labelled cases. CI runs install, build, and tests on Node.js 24.
+`npm test` runs the unit suites without network access. They cover config validation, API auth, front matter and chunking, the checked-in knowledge base files, triage-rule true and false positives, the answer pipeline's gates and downgrade paths, failure handling, the retry policy, and the ticket state machine, duplicate policy, and classifier floors, and the support analytics definitions. `npm run eval:rag` measures the live pipeline against labelled cases. CI runs install, build, and tests on Node.js 24.

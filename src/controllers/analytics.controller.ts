@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { User, Team, Track, Registration, Submission, JudgeEvaluation } from '../database/models';
 import { logger } from '../logger';
+import { getSupportReport, MAX_ANALYTICS_DAYS } from '../services/support-analytics.service';
 
 export async function getAnalyticsMetrics(req: Request, res: Response): Promise<void> {
   try {
@@ -97,5 +98,21 @@ export async function getAnalyticsMetrics(req: Request, res: Response): Promise<
       success: false,
       error: 'Internal server error while compiling analytics data.'
     });
+  }
+}
+
+/** GET /api/analytics/support?guildId=...&days=30: the same report as the /analytics Discord command. */
+export async function getSupportAnalytics(req: Request, res: Response): Promise<void> {
+  const guildId = typeof req.query.guildId === 'string' ? req.query.guildId : '';
+  const days = req.query.days === undefined ? 30 : Number(req.query.days);
+  if (!/^\d{17,20}$/.test(guildId) || !Number.isInteger(days) || days < 1 || days > MAX_ANALYTICS_DAYS) {
+    res.status(400).json({ success: false, error: `guildId (Discord snowflake) is required; days must be an integer from 1 to ${MAX_ANALYTICS_DAYS}.` });
+    return;
+  }
+  try {
+    res.status(200).json({ success: true, data: await getSupportReport(guildId, days) });
+  } catch (error) {
+    logger.error('Failed to compute support analytics', { guildId, error });
+    res.status(500).json({ success: false, error: 'Internal server error while compiling support analytics.' });
   }
 }

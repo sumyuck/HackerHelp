@@ -9,7 +9,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "register-commands": "ts-node src/discord/register-commands.ts",
     "seed": "ts-node src/database/seed.ts",
-    "test": "ts-node src/tests/services.test.ts && ts-node src/tests/hardening.test.ts && ts-node src/tests/knowledge.test.ts && ts-node src/tests/answer.test.ts && ts-node src/tests/retry.test.ts && ts-node src/tests/tickets.test.ts",
+    "test": "ts-node src/tests/services.test.ts && ts-node src/tests/hardening.test.ts && ts-node src/tests/knowledge.test.ts && ts-node src/tests/answer.test.ts && ts-node src/tests/retry.test.ts && ts-node src/tests/tickets.test.ts && ts-node src/tests/analytics.test.ts",
     "kb:ingest": "ts-node src/scripts/ingest-knowledge.ts",
     "eval:rag": "ts-node src/scripts/eval-rag.ts",
     "eval:dedup": "ts-node src/scripts/eval-dedup.ts"

@@ -14,7 +14,7 @@ import type { TicketStatus } from '../tickets/ticket-state';
  * or by name, and missing tags are created.
  */
 
-const STATUS_LABELS: Record<TicketStatus, string> = {
+export const STATUS_LABELS: Record<TicketStatus, string> = {
   open: 'Open', assigned: 'Assigned', waiting_user: 'Waiting on participant', resolved: 'Resolved'
 };
 const PRIORITY_COLORS = { low: 0x95a5a6, normal: 0x3498db, high: 0xe67e22, urgent: 0xe74c3c } as const;
